@@ -2,6 +2,7 @@
     python -m evershopper fetch                       # scarica le offerte da Everli
     python -m evershopper fetch --from-json f1.json   # prova la mappatura su risposte salvate, senza rete
     python -m evershopper show                        # mostra l'ultima cache
+    python -m evershopper reminders                   # legge la lista della spesa da Promemoria
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import cache, config, logs
+from . import cache, config, logs, reminders
 from .everli.client import (
     EverliClient,
     EverliError,
@@ -104,6 +105,25 @@ def cmd_show(cfg: dict, args) -> int:
     return 0
 
 
+def cmd_reminders(cfg: dict, args) -> int:
+    rc = cfg["reminders"]
+    list_name = args.list or rc["list"]
+    if args.from_json:
+        items = reminders.read_json(args.from_json)
+    else:
+        items = reminders.read_list(
+            list_name, backend=args.backend or rc["backend"], helper=config.resolve(rc["helper"])
+        )
+    if args.json:
+        print(json.dumps([i.to_dict() for i in items], ensure_ascii=False, indent=2))
+        return 0
+    print(f'Lista "{list_name}": {len(items)} voci da comprare')
+    for i in items:
+        print(f"  - {i.title}" + (f"  ({i.notes})" if i.notes else ""))
+    log.info("reminders ok: %d voci", len(items))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="evershopper")
     parser.add_argument("--config", type=Path, help="percorso di config.yaml")
@@ -115,6 +135,11 @@ def main(argv: list[str] | None = None) -> int:
     p_fetch.add_argument("--limit", type=int, default=20, help="offerte da mostrare")
     p_show = sub.add_parser("show", help="mostra l'ultima cache")
     p_show.add_argument("--limit", type=int, default=20)
+    p_rem = sub.add_parser("reminders", help="legge la lista della spesa da Promemoria")
+    p_rem.add_argument("--list", help="nome della lista (default da config.yaml)")
+    p_rem.add_argument("--backend", choices=["auto", "eventkit", "jxa"])
+    p_rem.add_argument("--from-json", type=Path, metavar="FILE", help="usa un output salvato dell'helper")
+    p_rem.add_argument("--json", action="store_true", help="stampa in JSON")
     args = parser.parse_args(argv)
 
     try:
@@ -125,11 +150,18 @@ def main(argv: list[str] | None = None) -> int:
     logs.setup(config.resolve(cfg["paths"]["log_dir"]), args.verbose)
 
     try:
-        return {"fetch": cmd_fetch, "show": cmd_show}[args.cmd](cfg, args)
+        return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders}[args.cmd](cfg, args)
     except SessionExpired as exc:
         log.warning("Sessione scaduta: %s", exc)
         notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py")
         return EXIT_SESSION_EXPIRED
+    except reminders.RemindersAccessDenied as exc:
+        log.error("%s", exc)
+        notify("Offerte Everli", "Accesso a Promemoria negato: controlla Privacy e sicurezza")
+        return EXIT_ERROR
+    except reminders.RemindersError as exc:
+        log.error("%s", exc)
+        return EXIT_ERROR
     except EverliError as exc:
         log.error("%s", exc)
         notify("Offerte Everli", f"Errore: {exc}")

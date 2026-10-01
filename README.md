@@ -7,7 +7,7 @@ Gira solo in locale, su macOS. Requisiti e fasi sono in [SPEC.md](SPEC.md).
 - [x] Fase 1 – strumenti di discovery (`discovery/`)
 - [ ] Fase 1 – esito documentato in `docs/everli-api.md`
 - [x] Fase 2 – fetch offerte + cache JSON (endpoint da definire in `config.yaml`)
-- [ ] Fase 3 – lettura Promemoria
+- [x] Fase 3 – lettura Promemoria (helper Swift da compilare sul Mac)
 - [ ] Fase 4 – matching
 - [ ] Fase 5 – output e notifiche
 - [ ] Fase 6 – launchd + Portachiavi
@@ -53,6 +53,22 @@ Comportamento:
 - 429 o errori del server → ci si ferma subito, nessun nuovo tentativo;
 - cache: `cache/offers-DATA.json` (offerte normalizzate, ordinate per sconto) + `cache/raw-DATA/` (risposte grezze);
 - log in `logs/evershopper.log` (rotazione 3 × 500 KB), senza header né cookie.
+
+## Fase 3: lista della spesa da Promemoria
+
+Legge, in sola lettura, le voci non completate della lista `reminders.list` (default "Spesa").
+
+```bash
+helpers/build.sh                       # compila bin/reminders-helper (serve Xcode o i Command Line Tools)
+bin/reminders-helper --lists           # la prima volta macOS chiede l'accesso a Promemoria
+python -m evershopper reminders        # elenco delle voci da comprare
+python -m evershopper reminders --json
+```
+
+- Backend `auto`: usa l'helper Swift (EventKit) se è compilato, altrimenti `osascript` (JXA),
+  che non richiede compilazione ma è più lento e chiede il permesso di Automazione.
+- Permesso negato → notifica e indicazione di dove abilitarlo in Impostazioni di Sistema → Privacy e sicurezza.
+- Lista inesistente → errore con l'elenco delle liste disponibili.
 
 ## Privacy e termini d'uso
 - La password non passa mai dallo script: il login si fa nel browser.

@@ -4,6 +4,7 @@ discovery/captures/
 cache/
 logs/
 config.yaml
+bin/
 *.har
 
 .venv/

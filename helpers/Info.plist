@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>it.evershopper.reminders-helper</string>
+    <key>CFBundleName</key>
+    <string>evershopper reminders helper</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Legge la lista della spesa per confrontarla con le offerte Everli.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Legge la lista della spesa per confrontarla con le offerte Everli.</string>
+</dict>
+</plist>
