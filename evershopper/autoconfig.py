@@ -32,13 +32,16 @@ DISC_WORDS = re.compile(r"(discounted|discount_price|offer|promo|sale|final|curr
 # Prezzi al kg/litro/unità ("price_per_type", "unit_price", "price_per_kg"…): non sono il prezzo del prodotto.
 PER_UNIT = re.compile(r"(per_|_per\b|unit|_kg|kilo|liter|litre|litro|unitario|reference|measure|al_kg|al_litro)")
 PCT_WORDS = re.compile(r"(percent|pct|perc|percentage|%|sconto|discount|saving|off)")
+# Per escludere le percentuali dai prezzi basta la parola "percento": "discounted_price" è un prezzo.
+PCT_STRICT = re.compile(r"(percent|pct|perc|%)")
 DATE_WORDS = re.compile(r"(end|until|expir|valid_?to|to_?date|fine|scadenza|ends|valid_?until|stop)")
 DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 FORMAT_VALUE = re.compile(r"\d\s*(g|gr|kg|ml|cl|l|lt|pz|x|conf|rotoli|capsule)\b", re.I)
 
 NAME_KEYS = ("name", "title", "display_name", "displayname", "product_name", "productname", "label", "nome")
 ID_KEYS = ("id", "product_id", "productid", "sku", "ean", "code", "uuid", "item_id")
-FORMAT_KEYS = ("size", "format", "weight", "quantity", "packaging", "unit_label", "measure", "measurement",
+FORMAT_KEYS = ("size", "format", "short_description", "description_short", "weight", "quantity", "packaging",
+               "unit_label", "measure", "measurement",
                "content", "formato", "peso", "grammage", "volume", "package", "quantity_label", "subtitle")
 URL_KEYS = ("url", "link", "permalink", "href", "share_url", "web_url", "slug_url", "path")
 
@@ -178,7 +181,8 @@ def infer_pagination(recs: list[dict], notes: list[str]) -> tuple[dict, dict, st
     pag = {"type": "none", "param": "page", "start": 1, "size_param": "", "size": 0,
            "last_page_path": "", "max_pages": 20}
     page_param = None
-    varying = {k: vs for k, vs in values.items() if len(set(map(str, vs))) > 1}
+    # Un parametro assente in alcune chiamate (tipicamente la prima pagina senza "skip") conta come variabile.
+    varying = {k: vs for k, vs in values.items() if len(set(map(str, vs))) > 1 or len(vs) < len(recs)}
     numeric = {k: vs for k, vs in varying.items() if all(_int(v) is not None for v in vs)}
 
     def pick(names):
@@ -301,7 +305,7 @@ def infer_fields(items: list[dict], notes: list[str]) -> tuple[dict, float]:
     # Prezzi: candidati numerici con "price"/"prezzo"/… nel percorso, esclusi quelli al kg/litro/unità.
     prices = [p for p, vs in present.items()
               if re.search(r"(price|prezzo|cost|amount|importo|value|valore)", p, re.I)
-              and not PER_UNIT.search(p.lower()) and not PCT_WORDS.search(_last(p))
+              and not PER_UNIT.search(p.lower()) and not PCT_STRICT.search(_last(p))
               and _share(vs, is_num) > 0.7]
 
     def agreement(full_p: str, disc_p: str) -> float:
