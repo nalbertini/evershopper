@@ -74,6 +74,11 @@ def parse_offer(item: dict, ep: dict) -> Offer | None:
         pct = abs(pct)
     elif full and disc is not None and full > disc:
         pct = round((full - disc) / full * 100, 1)
+    if full and disc == 0:
+        # Un prezzo scontato a zero accanto a un prezzo pieno non è un prezzo (promozioni 3x2,
+        # cashback…): si ricava dalla percentuale, o si considera senza sconto.
+        disc = round(full * (1 - pct / 100), 2) if pct and 0 < pct < 100 else full
+        pct = pct if pct and 0 < pct < 100 else 0.0
     if full is None and disc and pct and 0 < pct < 100:
         # Solo prezzo scontato e percentuale: il prezzo pieno si ricava.
         full = round(disc / (1 - pct / 100), 2)

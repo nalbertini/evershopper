@@ -271,3 +271,64 @@ def test_describe_item_shows_fields():
     lines = autoconfig.describe_item({"id": 1, "price": {"current": 199}, "name": "x" * 100})
     assert any(l.split()[0] == "price.current" and "int" in l for l in lines)
     assert any(l.rstrip().endswith("…") for l in lines)
+
+
+# Forma E: il prodotto vero di Everli (spesa.everli.com/api/offers), campi e valori come nella cattura.
+def everli_item(i, price=2267, discounted=949, pct=-58):
+    return {
+        "id": str(4028121 + i), "ref_id": 227652663 + i, "gdo_id": "187673", "store_id": "5211",
+        "name": f"Detersivo Liquido Lavatrice {i}", "short_description": "Imballaggio 2x1035ml",
+        "long_description": "", "thumbnail": "https://d2f5fuie6vdmie.cloudfront.net/asset/x.webp",
+        "type": "liter", "selling_type": "piece", "price": price, "price_per_type": 1,
+        "discount": discounted - price if discounted else 0, "variable_weight": False, "delta": 0,
+        "value": 2.07, "volume": 1534.16, "weight": 0, "gross_weight": 2364,
+        "product_calculation_type": "normal", "brand": "Dash", "brand_id": "508",
+        "category_name": "Bucato a Mano", "categories": [{"id": "1700", "name": "Bucato a Mano"}],
+        "main_category_name": "Cura Casa", "image": "", "minimum_quantity": 0, "maximum_quantity": 24,
+        "cashback_id": "", "discount_percentage": pct, "discounted_price": discounted,
+        "discounted_price_per_type": 458, "running_low": False, "frozen": False,
+        "details": {"details": {"origin": ""}, "additional_details": {"denomination": "Detersivo per bucato"}},
+    }
+
+
+def shape_e():
+    out = []
+    for n, skip in enumerate((None, 50)):
+        items = []
+        for i in range(50):
+            k = n * 50 + i
+            if k % 4 == 3:  # ~23% senza percentuale: discounted_price 0
+                items.append(everli_item(k, price=300 + k, discounted=0, pct=0))
+            else:
+                price = 1000 + k * 10
+                pct = -(10 + k % 50)
+                items.append(everli_item(k, price=price, discounted=round(price * (1 + pct / 100)), pct=pct))
+        params = {"limit": "50"} | ({"skip": str(skip)} if skip is not None else {})
+        out.append(rec("https://spesa.everli.com/api/offers", params, {"data": items}))
+    return out
+
+
+def test_shape_e_real_everli_fields():
+    p = autoconfig.propose(noise() + shape_e())
+    ep = p.endpoint
+    f = ep["fields"]
+    assert (f["price_full"], f["price_discounted"]) == ("price", "discounted_price")
+    assert f["discount_pct"] == "discount_percentage" and f["format"] == "short_description"
+    assert (f["id"], f["name"], f["brand"]) == ("id", "name", "brand")
+    assert ep["price_divisor"] == 100
+    pag = ep["pagination"]
+    assert (pag["type"], pag["param"], pag["start"]) == ("offset", "skip", 0)
+    q = autoconfig.quality(p)
+    assert q["suspicious"] == 0 and q["consistent"] == 1
+    first = next(o for o in p.offers if o.id == "4028121")
+    assert (first.price_full, first.price_discounted, first.discount_pct) == (10.0, 9.0, 10.0)
+    assert first.format == "Imballaggio 2x1035ml"
+    no_discount = next(o for o in p.offers if o.id == str(4028121 + 3))
+    assert no_discount.price_discounted == no_discount.price_full and no_discount.discount_pct == 0
+
+
+def test_the_real_product_from_the_capture():
+    # 22,67 € scontato a 9,49 € (-58%): non «22,67 € invece di 53,98 €».
+    ep = autoconfig.propose(shape_e()).endpoint
+    [o] = offers_from_pages([{"data": [everli_item(0)]}], ep)
+    assert (o.price_full, o.price_discounted, o.discount_pct) == (22.67, 9.49, 58.0)
