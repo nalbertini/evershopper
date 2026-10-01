@@ -57,6 +57,17 @@ schedule:                 # fase 6
   hour: 9
   minute: 0
 
+matching:
+  synonyms: {}            # aggiunte ai sinonimi di base, es. {"latte": ["latte uht"]}
+  exclude: {}             # parole che escludono, es. {"latte": ["soia"]}
+  max_doubts: 8           # candidati in dubbio per voce
+  llm:
+    enabled: false        # seconda passata con l'API Claude sui dubbi
+    model: claude-opus-5-5
+    scope: ambiguous      # ambiguous (solo i dubbi) | all (anche gli abbinamenti sicuri)
+    keychain_service: evershopper
+    keychain_account: anthropic-api-key
+
 output:
   channel: notification   # notification | note | email
   min_discount_pct: 10

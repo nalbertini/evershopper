@@ -3,6 +3,7 @@
     python -m evershopper fetch --from-json f1.json   # prova la mappatura su risposte salvate, senza rete
     python -m evershopper show                        # mostra l'ultima cache
     python -m evershopper reminders                   # legge la lista della spesa da Promemoria
+    python -m evershopper match                       # voci della lista in offerta (ultima cache)
 """
 
 from __future__ import annotations
@@ -11,9 +12,10 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from . import cache, config, logs, reminders
+from . import cache, config, keychain, llm, logs, matching, reminders
 from .everli.client import (
     EverliClient,
     EverliError,
@@ -143,6 +145,96 @@ def cmd_reminders(cfg: dict, args) -> int:
     return 0
 
 
+def _load_items(cfg: dict, path: Path | None) -> list:
+    if path:
+        return reminders.read_json(path)
+    rc = cfg["reminders"]
+    return reminders.read_list(
+        rc["list"], list_id=rc.get("list_id") or None, backend=rc["backend"],
+        app=config.resolve(rc["app"]), helper=config.resolve(rc["helper"]),
+    )
+
+
+def _load_offers(cfg: dict, path: Path | None) -> tuple[str, list[Offer]]:
+    if path:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload.get("fetched_at", path.name), [Offer.from_dict(o) for o in payload["offers"]]
+    latest = cache.load_latest(config.resolve(cfg["paths"]["cache_dir"]))
+    if not latest:
+        raise EverliError("Nessuna offerta in cache: lancia prima `python -m evershopper fetch`")
+    payload, offers = latest
+    return payload["fetched_at"], offers
+
+
+def _fmt_offer(o: Offer) -> str:
+    pct = f"-{o.discount_pct:g}%" if o.discount_pct is not None else "    "
+    price = f"{o.price_discounted:.2f} €" if o.price_discounted is not None else "? €"
+    was = f" (era {o.price_full:.2f} €)" if o.price_full is not None else ""
+    label = " · ".join(x for x in (o.brand, o.name, o.format) if x)
+    return f"{pct:>7}  {price}{was}  {label}"
+
+
+def cmd_match(cfg: dict, args) -> int:
+    mc = cfg["matching"]
+    fetched_at, offers = _load_offers(cfg, args.offers_json)
+    items = _load_items(cfg, args.reminders_json)
+    matcher = matching.Matcher(mc.get("synonyms"), mc.get("exclude"), int(mc.get("max_doubts", 8)))
+    results = matcher.match(items, offers)
+
+    lc = mc["llm"]
+    use_llm = lc["enabled"] if args.llm is None else args.llm
+    if use_llm and any(r.doubts for r in results):
+        key = keychain.get_secret(lc["keychain_service"], lc["keychain_account"])
+        if not key:
+            log.warning(
+                "Chiave API non trovata nel Portachiavi (servizio %s, account %s): salto la seconda passata",
+                lc["keychain_service"], lc["keychain_account"],
+            )
+        else:
+            try:
+                moved = llm.resolve(results, api_key=key, model=lc["model"], scope=lc.get("scope", "ambiguous"),
+                                    cache_dir=config.resolve(cfg["paths"]["cache_dir"]))
+                log.info("Claude ha confermato %d abbinamenti", moved)
+            except Exception as exc:  # la seconda passata è opzionale: mai bloccare l'esecuzione
+                log.warning("Seconda passata con Claude non riuscita (%s): restano i risultati locali",
+                            type(exc).__name__)
+
+    if not args.no_cache:
+        out_dir = config.resolve(cfg["paths"]["cache_dir"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"match-{datetime.now():%Y-%m-%d}.json"
+        out.write_text(json.dumps({"offers_fetched_at": fetched_at, "results": [r.to_dict() for r in results]},
+                                  ensure_ascii=False, indent=2), encoding="utf-8")
+
+    threshold = float(cfg["output"].get("min_discount_pct") or 0)
+    in_offer = [r for r in results if any((c.offer.discount_pct or 0) >= threshold for c in r.matches)]
+    print(f"Offerte del {fetched_at} · {len(in_offer)} voci su {len(results)} in offerta"
+          + (f" (sconto ≥ {threshold:g}%)" if threshold else ""))
+    for r in results:
+        shown = [c for c in r.matches if (c.offer.discount_pct or 0) >= threshold][: args.limit]
+        title = r.item.title + (f" ({r.item.notes})" if r.item.notes else "")
+        if not shown and not r.doubts:
+            if r.matches:
+                best = max(c.offer.discount_pct or 0 for c in r.matches)
+                print(f"\n{title} — in offerta solo sotto soglia (max -{best:g}%)")
+            else:
+                print(f"\n{title} — nessuna offerta")
+            continue
+        print(f"\n{title}")
+        for c in shown:
+            print(_fmt_offer(c.offer) + ("   [Claude]" if c.source == "llm" else ""))
+        hidden = len(r.matches) - len(shown)
+        if hidden > 0:
+            print(f"      … altre {hidden} sotto soglia o oltre il limite")
+        for c in r.doubts[:3]:
+            print(f"      ? {_fmt_offer(c.offer).strip()}  — {c.reason}")
+        if len(r.doubts) > 3:
+            print(f"      ? … e altri {len(r.doubts) - 3} dubbi")
+    if any(r.doubts for r in results) and not use_llm:
+        print("\nI dubbi si possono far decidere a Claude con --llm (vedi README).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="evershopper")
     parser.add_argument("--config", type=Path, help="percorso di config.yaml")
@@ -161,6 +253,13 @@ def main(argv: list[str] | None = None) -> int:
     p_rem.add_argument("--list-id", help="identificativo della lista, se ci sono nomi duplicati")
     p_rem.add_argument("--from-json", type=Path, metavar="FILE", help="usa un output salvato dell'helper")
     p_rem.add_argument("--json", action="store_true", help="stampa in JSON")
+    p_match = sub.add_parser("match", help="voci della lista in offerta")
+    p_match.add_argument("--offers-json", type=Path, metavar="FILE", help="offerte da un file di cache")
+    p_match.add_argument("--reminders-json", type=Path, metavar="FILE", help="lista da un file JSON")
+    p_match.add_argument("--llm", dest="llm", action="store_true", default=None, help="forza la seconda passata")
+    p_match.add_argument("--no-llm", dest="llm", action="store_false", help="salta la seconda passata")
+    p_match.add_argument("--no-cache", action="store_true", help="non salvare il risultato")
+    p_match.add_argument("--limit", type=int, default=3, help="offerte mostrate per voce")
     args = parser.parse_args(argv)
 
     try:
@@ -171,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     logs.setup(config.resolve(cfg["paths"]["log_dir"]), args.verbose)
 
     try:
-        return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders}[args.cmd](cfg, args)
+        return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders, "match": cmd_match}[args.cmd](cfg, args)
     except SessionExpired as exc:
         log.warning("Sessione scaduta: %s", exc)
         notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py")

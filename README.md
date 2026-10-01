@@ -8,7 +8,7 @@ Gira solo in locale, su macOS. Requisiti e fasi sono in [SPEC.md](SPEC.md).
 - [ ] Fase 1 – esito documentato in `docs/everli-api.md`
 - [x] Fase 2 – fetch offerte + cache JSON (endpoint da definire in `config.yaml`)
 - [x] Fase 3 – lettura Promemoria (helper Swift da compilare sul Mac)
-- [ ] Fase 4 – matching
+- [x] Fase 4 – matching (locale + seconda passata opzionale con Claude)
 - [ ] Fase 5 – output e notifiche
 - [ ] Fase 6 – launchd + Portachiavi
 
@@ -75,6 +75,34 @@ python -m evershopper reminders --json
 - Più liste con lo stesso nome (account diversi) → vengono unite, con un avviso; per sceglierne una
   copia l'id mostrato da `reminders --lists` in `reminders.list_id`.
 - Senza attivare l'ambiente virtuale si usa `.venv/bin/python -m evershopper …`.
+
+## Fase 4: abbinamento lista × offerte
+
+```bash
+.venv/bin/python -m evershopper match            # offerte dall'ultima cache, lista da Promemoria
+.venv/bin/python -m evershopper match --offers-json cache/offers-AAAA-MM-GG.json --reminders-json lista.json
+.venv/bin/python -m evershopper match --llm      # fa decidere i dubbi a Claude
+```
+
+Prima passata, locale:
+- normalizzazione (minuscole, accenti, unità e quantità tolte) e radici singolare/plurale;
+- tutte le parole della voce devono comparire nel prodotto (tollerati piccoli errori di battitura);
+- "latte" in "Cioccolato **al** latte" o "caffè" in "Gelato **gusto** caffè" → **dubbio**;
+- sinonimi ed esclusioni di base in `evershopper/data/sinonimi.yaml`, ampliabili in
+  `config.yaml` → `matching.synonyms` / `matching.exclude` (si aggiungono, non sostituiscono);
+- le note del promemoria ("intero") ordinano le offerte, non le escludono.
+
+Seconda passata, opzionale (`matching.llm.enabled: true` oppure `--llm`): una sola richiesta all'API
+Claude con le voci in dubbio e i loro candidati, risposta in JSON vincolato da uno schema. Si inviano solo
+i nomi di voci e prodotti; le risposte sono in cache, quindi rilanciare non costa. Se la chiave manca o
+l'API fallisce restano i risultati della prima passata.
+
+La chiave API va nel Portachiavi (la chiede senza mostrarla):
+```bash
+security add-generic-password -s evershopper -a anthropic-api-key -w
+```
+
+Il risultato è salvato in `cache/match-AAAA-MM-GG.json` per la fase 5.
 
 ## Privacy e termini d'uso
 - La password non passa mai dallo script: il login si fa nel browser.
