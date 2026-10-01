@@ -2,8 +2,11 @@
 // e li restituisce in JSON. Solo lettura.
 //
 // Uso:
-//   reminders-helper --list Spesa [--out FILE]
-//   reminders-helper --lists      [--out FILE]   # elenca le liste disponibili
+//   reminders-helper --list Spesa [--list-id ID] [--out FILE]
+//   reminders-helper --lists      [--out FILE]   # elenca le liste con account e identificativo
+//
+// Più liste possono avere lo stesso nome (account diversi): con il solo --list
+// vengono unite, con --list-id se ne sceglie una.
 //
 // Con --out il risultato (o l'errore, come {"error", "code"}) va nel file invece
 // che su stdout: serve quando l'helper gira come app lanciata da `open`, che non
@@ -21,15 +24,27 @@ struct Item: Codable {
     let priority: Int
     let due: String?
     let created: String?
+    let listId: String
+}
+
+struct ListInfo: Codable {
+    let id: String
+    let title: String
+    let source: String
 }
 
 struct Output: Codable {
     let list: String
+    let matched: [ListInfo]
     let items: [Item]
 }
 
 struct Lists: Codable {
-    let lists: [String]
+    let lists: [ListInfo]
+}
+
+func info(_ c: EKCalendar) -> ListInfo {
+    ListInfo(id: c.calendarIdentifier, title: c.title, source: c.source?.title ?? "")
 }
 
 struct Failure: Codable {
@@ -78,6 +93,7 @@ func statusDescription() -> String {
 
 // --- argomenti ---
 var listName: String?
+var listId: String?
 var listOnly = false
 var args = CommandLine.arguments.dropFirst()
 while let arg = args.popFirst() {
@@ -85,6 +101,9 @@ while let arg = args.popFirst() {
     case "--list":
         guard let value = args.popFirst() else { fail("--list richiede il nome della lista", 2) }
         listName = value
+    case "--list-id":
+        guard let value = args.popFirst() else { fail("--list-id richiede un identificativo", 2) }
+        listId = value
     case "--lists":
         listOnly = true
     case "--out":
@@ -119,14 +138,18 @@ if !granted {
 
 let calendars = store.calendars(for: .reminder)
 if listOnly {
-    emit(Lists(lists: calendars.map { $0.title }.sorted()))
+    emit(Lists(lists: calendars.map(info).sorted { ($0.title, $0.source) < ($1.title, $1.source) }))
     exit(0)
 }
 
-let matching = calendars.filter { $0.title == listName! }
+let matching = calendars.filter { c in
+    if let id = listId, !id.isEmpty { return c.calendarIdentifier == id }
+    return c.title == listName!
+}
 if matching.isEmpty {
     let available = calendars.map { $0.title }.sorted().joined(separator: ", ")
-    fail("Lista \"\(listName!)\" non trovata. Liste disponibili: \(available)", 4)
+    let what = (listId?.isEmpty == false) ? "con identificativo \(listId!)" : "\"\(listName!)\""
+    fail("Lista \(what) non trovata. Liste disponibili: \(available)", 4)
 }
 
 // --- lettura ---
@@ -151,9 +174,10 @@ let items = fetched
             notes: (notes?.isEmpty ?? true) ? nil : notes,
             priority: r.priority,
             due: due,
-            created: r.creationDate.map { iso.string(from: $0) }
+            created: r.creationDate.map { iso.string(from: $0) },
+            listId: r.calendar.calendarIdentifier
         )
     }
     .filter { !$0.title.isEmpty }
 
-emit(Output(list: listName!, items: items))
+emit(Output(list: listName!, matched: matching.map(info), items: items))

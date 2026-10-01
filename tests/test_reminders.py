@@ -51,7 +51,7 @@ def test_auto_falls_back_to_jxa_without_helper(tmp_path):
     items = read_list('Spesa "casa"', helper=tmp_path / "manca", run=run, system="Darwin")
     cmd = run.calls[0]
     assert cmd[:3] == ["osascript", "-l", "JavaScript"]
-    assert 'const name = "Spesa \\"casa\\"";' in cmd[4]  # nome della lista con escape corretto
+    assert 'const name = "Spesa \\"casa\\"", listId = "";' in cmd[4]  # escape corretto
     assert len(items) == 2
 
 
@@ -132,8 +132,27 @@ def test_access_denied_message_names_the_app(app):
         read_list("Spesa", app=app, run=FakeOpen({"error": "negato", "code": 3}), system="Darwin")
 
 
-def test_list_names(app, helper):
-    assert reminders.list_names(app=app, run=FakeOpen({"lists": ["Casa", "Spesa"]}), system="Darwin") == ["Casa", "Spesa"]
-    run = FakeRun(stdout=json.dumps({"lists": ["Spesa"]}))
-    assert reminders.list_names(backend="eventkit", helper=helper, run=run, system="Darwin") == ["Spesa"]
+LISTS = [{"id": "X1", "title": "Spesa", "source": "iCloud"}, {"id": "X2", "title": "Spesa", "source": "Gmail"}]
+
+
+def test_list_lists(app, helper):
+    assert reminders.list_lists(app=app, run=FakeOpen({"lists": LISTS}), system="Darwin") == LISTS
+    run = FakeRun(stdout=json.dumps({"lists": LISTS}))
+    assert reminders.list_lists(backend="eventkit", helper=helper, run=run, system="Darwin") == LISTS
     assert run.calls == [[str(helper), "--lists"]]
+
+
+def test_list_id_is_passed(app, helper):
+    run = FakeOpen(json.loads(HELPER_OUTPUT))
+    read_list("Spesa", list_id="X2", app=app, run=run, system="Darwin")
+    assert run.calls[0][5:10] == ["--args", "--list", "Spesa", "--list-id", "X2"]
+    run = FakeRun(stdout=HELPER_OUTPUT)
+    read_list("Spesa", list_id="X2", backend="jxa", run=run, system="Darwin")
+    assert 'listId = "X2"' in run.calls[0][4]
+
+
+def test_duplicate_lists_warn(helper, caplog):
+    out = json.loads(HELPER_OUTPUT) | {"matched": LISTS}
+    items = read_list("Spesa", helper=helper, run=FakeRun(stdout=json.dumps(out)), system="Darwin")
+    assert len(items) == 2
+    assert "2 liste «Spesa»" in caplog.text and "iCloud, Gmail" in caplog.text

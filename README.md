@@ -72,6 +72,9 @@ python -m evershopper reminders --json
 - Permesso negato → notifica; si riabilita in Impostazioni di Sistema → Privacy e sicurezza → Promemoria.
   Per far ricomparire la richiesta: `tccutil reset Reminders it.evershopper.reminders-helper`.
 - Lista inesistente → errore con l'elenco delle liste disponibili.
+- Più liste con lo stesso nome (account diversi) → vengono unite, con un avviso; per sceglierne una
+  copia l'id mostrato da `reminders --lists` in `reminders.list_id`.
+- Senza attivare l'ambiente virtuale si usa `.venv/bin/python -m evershopper …`.
 
 ## Privacy e termini d'uso
 - La password non passa mai dallo script: il login si fa nel browser.

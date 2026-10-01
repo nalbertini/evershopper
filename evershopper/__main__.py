@@ -113,16 +113,26 @@ def cmd_reminders(cfg: dict, args) -> int:
         "app": config.resolve(rc["app"]),
         "helper": config.resolve(rc["helper"]),
     }
+    list_id = args.list_id if args.list_id is not None else rc.get("list_id")
     if args.lists:
-        names = reminders.list_names(**where)
+        lists = reminders.list_lists(**where)
+        width = max((len(x["title"]) for x in lists), default=0)
         print("Liste di Promemoria:")
-        for name in names:
-            print(f"  - {name}" + ("   ← configurata" if name == rc["list"] else ""))
+        for x in lists:
+            chosen = x["id"] == list_id if list_id else x["title"] == list_name
+            account = f"[{x['source']}]" if x.get("source") else ""
+            print(f"  - {x['title']:<{width}}  {account:<12} id: {x['id']}" + ("   ← configurata" if chosen else ""))
+        titles = [x["title"] for x in lists]
+        if not list_id and titles.count(list_name) > 1:
+            print(
+                f"\nCi sono {titles.count(list_name)} liste «{list_name}»: senza `list_id` le voci vengono unite.\n"
+                "Per usarne una sola copia l'id in config.yaml → reminders.list_id (o usa --list-id)."
+            )
         return 0
     if args.from_json:
         items = reminders.read_json(args.from_json)
     else:
-        items = reminders.read_list(list_name, **where)
+        items = reminders.read_list(list_name, list_id=list_id or None, **where)
     if args.json:
         print(json.dumps([i.to_dict() for i in items], ensure_ascii=False, indent=2))
         return 0
@@ -148,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     p_rem.add_argument("--list", help="nome della lista (default da config.yaml)")
     p_rem.add_argument("--backend", choices=list(reminders.BACKENDS))
     p_rem.add_argument("--lists", action="store_true", help="elenca le liste disponibili")
+    p_rem.add_argument("--list-id", help="identificativo della lista, se ci sono nomi duplicati")
     p_rem.add_argument("--from-json", type=Path, metavar="FILE", help="usa un output salvato dell'helper")
     p_rem.add_argument("--json", action="store_true", help="stampa in JSON")
     args = parser.parse_args(argv)

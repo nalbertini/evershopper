@@ -68,6 +68,14 @@ def _raise_for_code(code: int, err: str, list_name: str | None) -> None:
 
 def parse_output(text: str | dict) -> list[ShoppingItem]:
     data = json.loads(text) if isinstance(text, str) else text
+    matched = data.get("matched") or []
+    if len(matched) > 1:
+        accounts = ", ".join(m.get("source") or "?" for m in matched)
+        log.warning(
+            "Ci sono %d liste «%s» (account: %s): le voci sono unite. Per usarne una sola imposta "
+            "reminders.list_id in config.yaml (identificativi con `reminders --lists`).",
+            len(matched), data.get("list"), accounts,
+        )
     items = []
     for raw in data.get("items", []):
         title = (raw.get("title") or "").strip()
@@ -77,21 +85,24 @@ def parse_output(text: str | dict) -> list[ShoppingItem]:
     return items
 
 
-def _helper_args(list_name: str | None) -> list[str]:
-    return ["--list", list_name] if list_name is not None else ["--lists"]
+def _helper_args(list_name: str | None, list_id: str | None = None) -> list[str]:
+    if list_name is None:
+        return ["--lists"]
+    return ["--list", list_name] + (["--list-id", list_id] if list_id else [])
 
 
-def _via_helper(helper: Path, list_name: str | None, run: Runner) -> dict:
-    res = run([str(helper), *_helper_args(list_name)])
+def _via_helper(helper: Path, list_name: str | None, run: Runner, list_id: str | None = None) -> dict:
+    res = run([str(helper), *_helper_args(list_name, list_id)])
     _raise_for_code(res.returncode, (res.stderr or "").strip(), list_name)
     return json.loads(res.stdout)
 
 
-def _via_app(app: Path, list_name: str | None, run: Runner) -> dict:
+def _via_app(app: Path, list_name: str | None, run: Runner, list_id: str | None = None) -> dict:
     """`open` non restituisce stdout né codice di uscita: il risultato passa da un file."""
     with tempfile.TemporaryDirectory(prefix="evershopper-") as tmp:
         out = Path(tmp) / "out.json"
-        res = run(["open", "-W", "-n", "-g", str(app), "--args", *_helper_args(list_name), "--out", str(out)])
+        args = _helper_args(list_name, list_id)
+        res = run(["open", "-W", "-n", "-g", str(app), "--args", *args, "--out", str(out)])
         if res.returncode != 0:
             raise RemindersError(f"Impossibile avviare {app.name}: {(res.stderr or '').strip()}")
         if not out.exists():
@@ -103,20 +114,26 @@ def _via_app(app: Path, list_name: str | None, run: Runner) -> dict:
 
 
 JXA_SCRIPT = """
-const name = %s;
+const name = %s, listId = %s;
 const app = Application("Reminders");
-const lists = app.lists.whose({name: name});
+const lists = listId ? app.lists.whose({id: listId}) : app.lists.whose({name: name});
 if (lists.length === 0) {
   throw new Error("LIST_NOT_FOUND " + app.lists.name().join(", "));
 }
-const rs = lists[0].reminders.whose({completed: false});
-const ids = rs.id(), titles = rs.name(), notes = rs.body();
-JSON.stringify({list: name, items: ids.map((id, i) => ({id: id, title: titles[i], notes: notes[i]}))});
+const matched = [], items = [];
+for (let l = 0; l < lists.length; l++) {
+  const list = lists[l];
+  matched.push({id: list.id(), title: list.name(), source: ""});
+  const rs = list.reminders.whose({completed: false});
+  const ids = rs.id(), titles = rs.name(), notes = rs.body();
+  ids.forEach((id, i) => items.push({id: id, title: titles[i], notes: notes[i]}));
+}
+JSON.stringify({list: name, matched: matched, items: items});
 """
 
 
-def _from_jxa(list_name: str, run: Runner) -> list[ShoppingItem]:
-    script = JXA_SCRIPT % json.dumps(list_name)
+def _from_jxa(list_name: str, run: Runner, list_id: str | None = None) -> list[ShoppingItem]:
+    script = JXA_SCRIPT % (json.dumps(list_name), json.dumps(list_id or ""))
     res = run(["osascript", "-l", "JavaScript", "-e", script])
     err = (res.stderr or "").strip()
     if res.returncode != 0:
@@ -155,6 +172,7 @@ def _choose(backend: str, app: Path | None, helper: Path | None, system: str | N
 def read_list(
     list_name: str,
     *,
+    list_id: str | None = None,
     backend: str = "auto",
     app: Path | None = None,
     helper: Path | None = None,
@@ -165,27 +183,29 @@ def read_list(
     chosen = _choose(backend, app, helper, system)
     log.info("Promemoria: lettura di '%s' via %s", list_name, chosen)
     if chosen == "app":
-        return parse_output(_via_app(app, list_name, run))
+        return parse_output(_via_app(app, list_name, run, list_id))
     if chosen == "eventkit":
-        return parse_output(_via_helper(helper, list_name, run))
-    return _from_jxa(list_name, run)
+        return parse_output(_via_helper(helper, list_name, run, list_id))
+    return _from_jxa(list_name, run, list_id)
 
 
-def list_names(
+def list_lists(
     *,
     backend: str = "auto",
     app: Path | None = None,
     helper: Path | None = None,
     run: Runner = _run,
     system: str | None = None,
-) -> list[str]:
-    """Nomi delle liste di Promemoria (utile per la configurazione e per provare il permesso)."""
+) -> list[dict]:
+    """Liste di Promemoria come {id, title, source} (per la configurazione e per provare il permesso)."""
     chosen = _choose(backend, app, helper, system)
     if chosen == "app":
         return _via_app(app, None, run)["lists"]
     if chosen == "eventkit":
         return _via_helper(helper, None, run)["lists"]
-    res = run(["osascript", "-l", "JavaScript", "-e", 'JSON.stringify(Application("Reminders").lists.name())'])
+    script = 'const l = Application("Reminders").lists; const ids = l.id(), names = l.name();' \
+        ' JSON.stringify(ids.map((id, i) => ({id: id, title: names[i], source: ""})))'
+    res = run(["osascript", "-l", "JavaScript", "-e", script])
     if res.returncode != 0:
         raise RemindersError(f"osascript è uscito con codice {res.returncode}: {(res.stderr or '').strip()}")
     return json.loads(res.stdout)
