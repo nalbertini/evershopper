@@ -6,6 +6,8 @@
     python -m evershopper match                       # voci della lista in offerta (ultima cache)
     python -m evershopper run                         # tutto il flusso + notifica/nota/email (fase 5)
     python -m evershopper run --offline --dry-run     # prova senza Everli e senza inviare niente
+    python -m evershopper schedule install            # esecuzione settimanale con launchd (fase 6)
+    python -m evershopper doctor                      # controlla che sia tutto pronto
 """
 
 from __future__ import annotations
@@ -14,11 +16,12 @@ import argparse
 import json
 import logging
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-from . import cache, config, logs, outputs, pipeline, report, reminders
-from .everli.client import EverliError, SessionExpired
+from . import cache, config, doctor, logs, outputs, pipeline, report, reminders, schedule
+from .everli.client import ConnectionFailed, EverliError, SessionExpired
 from .models import Offer
 from .notify import notify
 
@@ -26,6 +29,8 @@ log = logging.getLogger("evershopper")
 
 EXIT_SESSION_EXPIRED = 2
 EXIT_ERROR = 1
+RETRY_DELAY_S = 90
+EXIT_MEANING = {"0": "ok", "1": "errore (vedi logs/evershopper.log)", "2": "sessione Everli scaduta"}
 
 
 def _print_offers(offers: list[Offer], limit: int) -> None:
@@ -200,7 +205,13 @@ def cmd_run(cfg: dict, args) -> int:
         log.info("Offerte di oggi già in cache (%s): nessuna richiesta a Everli", today.name)
         fetched_at, offers = pipeline.load_offers(cfg, today)
     else:
-        _, _, _, path = pipeline.fetch_offers(cfg)
+        try:
+            _, _, _, path = pipeline.fetch_offers(cfg)
+        except ConnectionFailed as exc:
+            # Al risveglio dal sonno la rete può non essere ancora pronta: un solo nuovo tentativo.
+            log.warning("%s: riprovo una volta tra %d s", exc, RETRY_DELAY_S)
+            time.sleep(RETRY_DELAY_S)
+            _, _, _, path = pipeline.fetch_offers(cfg)
         fetched_at, offers = pipeline.load_offers(cfg, path)
     age = _age_days(fetched_at)
     if age is not None and age > 7 and not args.offers_json:
@@ -233,6 +244,43 @@ def cmd_run(cfg: dict, args) -> int:
     failures = _deliver(cfg, rep, text, html, items, from_file=args.reminders_json is not None)
     log.info("run ok: %d voci in offerta, %d canali falliti", len(rep.lines), failures)
     return EXIT_ERROR if failures else 0
+
+
+def cmd_schedule(cfg: dict, args) -> int:
+    if args.action == "install":
+        path = schedule.install(cfg, log_dir=config.resolve(cfg["paths"]["log_dir"]))
+        weekday, hour, minute = schedule.timing(cfg)
+        print(f"LaunchAgent installato: {path}")
+        print(f"Esecuzione {schedule.describe(weekday, hour, minute)} · "
+              f"prossima: {schedule.next_run(weekday, hour, minute):%d/%m/%Y %H:%M}")
+        print("Prova subito sotto launchd con: .venv/bin/python -m evershopper schedule run-now")
+    elif args.action == "uninstall":
+        removed = schedule.uninstall()
+        print("LaunchAgent rimosso" if removed else "LaunchAgent non installato")
+    elif args.action == "run-now":
+        schedule.run_now()
+        print("Avviato: segui l'esecuzione con  tail -f logs/launchd.log logs/evershopper.log")
+    else:
+        info = schedule.status()
+        if not info["installed"]:
+            print("LaunchAgent non installato: .venv/bin/python -m evershopper schedule install")
+            return EXIT_ERROR
+        cal = info["plist"]["StartCalendarInterval"]
+        weekday, hour, minute = cal["Weekday"], cal["Hour"], cal["Minute"]
+        print(f"Installato: {schedule.describe(weekday, hour, minute)} · "
+              f"prossima: {schedule.next_run(weekday, hour, minute):%d/%m/%Y %H:%M}")
+        print(f"Caricato in launchd: {'sì' if info['loaded'] else 'no'}"
+              + (f" · stato: {info['state']}" if info.get("state") else ""))
+        if info.get("runs"):
+            code = info.get("last_exit", "?")
+            print(f"Esecuzioni: {info['runs']} · ultimo codice di uscita: {code} ({EXIT_MEANING.get(code, '?')})")
+        if (weekday, hour, minute) != schedule.timing(cfg):
+            print("Attenzione: config.yaml ha un orario diverso, rilancia `schedule install` per applicarlo")
+    return 0
+
+
+def cmd_doctor(cfg: dict, args) -> int:
+    return 0 if doctor.run(cfg) else EXIT_ERROR
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -269,6 +317,9 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--reminders-json", type=Path, metavar="FILE", help="lista da un file JSON")
     p_run.add_argument("--llm", dest="llm", action="store_true", default=None, help="forza la seconda passata")
     p_run.add_argument("--no-llm", dest="llm", action="store_false", help="salta la seconda passata")
+    p_sched = sub.add_parser("schedule", help="esecuzione settimanale con launchd")
+    p_sched.add_argument("action", choices=["install", "uninstall", "status", "run-now"])
+    sub.add_parser("doctor", help="controlla configurazione, permessi, Portachiavi e launchd")
     args = parser.parse_args(argv)
 
     try:
@@ -280,16 +331,19 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders, "match": cmd_match,
-                "run": cmd_run}[args.cmd](cfg, args)
+                "run": cmd_run, "schedule": cmd_schedule, "doctor": cmd_doctor}[args.cmd](cfg, args)
     except SessionExpired as exc:
         log.warning("Sessione scaduta: %s", exc)
-        notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py")
+        notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py --login")
         return EXIT_SESSION_EXPIRED
     except reminders.RemindersAccessDenied as exc:
         log.error("%s", exc)
         notify("Offerte Everli", "Accesso a Promemoria negato: controlla Privacy e sicurezza")
         return EXIT_ERROR
     except reminders.RemindersError as exc:
+        log.error("%s", exc)
+        return EXIT_ERROR
+    except schedule.ScheduleError as exc:
         log.error("%s", exc)
         return EXIT_ERROR
     except EverliError as exc:

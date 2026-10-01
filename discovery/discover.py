@@ -2,10 +2,11 @@
 
 Apre it.everli.com in un Chromium visibile, lascia fare il login a mano,
 registra le chiamate XHR/fetch mentre si naviga fino alla pagina offerte
-del supermercato e alla fine salva la sessione (storageState).
+del supermercato e alla fine salva la sessione (storageState) nel Portachiavi.
 
 Uso (sul Mac, dalla root del repo):
-    python discovery/discover.py
+    .venv/bin/python discovery/discover.py            # discovery: login + registrazione chiamate
+    .venv/bin/python discovery/discover.py --login    # solo nuovo login, quando la sessione è scaduta
 
 Niente credenziali passano dallo script: il login lo fa l'utente nel browser.
 Cookie e token negli header vengono oscurati prima di scrivere su disco.
@@ -13,8 +14,8 @@ Cookie e token negli header vengono oscurati prima di scrivere su disco.
 
 from __future__ import annotations
 
+import argparse
 import json
-import os
 import re
 import sys
 from datetime import datetime
@@ -24,8 +25,10 @@ from urllib.parse import parse_qsl, urlsplit
 from playwright.sync_api import Request, Response, sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from evershopper import config, keychain  # noqa: E402
+
 STATE_DIR = ROOT / ".state"
-SESSION_FILE = STATE_DIR / "everli-session.json"
 META_FILE = STATE_DIR / "everli-meta.json"
 CAPTURE_DIR = ROOT / "discovery" / "captures"
 
@@ -59,6 +62,15 @@ def redact_url(url: str) -> tuple[str, dict[str, str]]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Discovery dell'API Everli e login manuale")
+    parser.add_argument("--login", action="store_true", help="solo login: non registra le chiamate di rete")
+    login_only = parser.parse_args().login
+
+    kc = config.load()["everli"]["keychain"]
+    try:
+        saved = keychain.load_session(kc["service"], kc["session_account"])
+    except keychain.KeychainError:
+        saved = None
     STATE_DIR.mkdir(mode=0o700, exist_ok=True)
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
@@ -69,6 +81,8 @@ def main() -> int:
 
     def on_response(response: Response) -> None:
         nonlocal count
+        if login_only:
+            return
         request: Request = response.request
         if request.resource_type not in ("xhr", "fetch"):
             return
@@ -108,7 +122,7 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, slow_mo=50)
         context = browser.new_context(
-            storage_state=str(SESSION_FILE) if SESSION_FILE.exists() else None,
+            storage_state=saved,
             locale="it-IT",
             viewport={"width": 1280, "height": 900},
         )
@@ -116,26 +130,32 @@ def main() -> int:
         page = context.new_page()
         page.goto(START_URL)
 
-        print(
-            "\nBrowser aperto.\n"
-            "  1. Fai login a mano (solo la prima volta).\n"
-            "  2. Scegli il supermercato abituale e apri la pagina offerte/promozioni.\n"
-            "  3. Scorri un po' la lista e passa alla pagina successiva, se c'è.\n"
-            "Le chiamate di rete vengono registrate qui sotto.\n"
-        )
+        if login_only:
+            print("\nBrowser aperto: fai login a mano, poi premi INVIO qui.\n")
+        else:
+            print(
+                "\nBrowser aperto.\n"
+                "  1. Fai login a mano (solo la prima volta).\n"
+                "  2. Scegli il supermercato abituale e apri la pagina offerte/promozioni.\n"
+                "  3. Scorri un po' la lista e passa alla pagina successiva, se c'è.\n"
+                "Le chiamate di rete vengono registrate qui sotto.\n"
+            )
         input("Premi INVIO qui quando hai finito per salvare la sessione e chiudere…\n")
 
-        context.storage_state(path=str(SESSION_FILE))
-        os.chmod(SESSION_FILE, 0o600)
+        # Nessun file: la sessione va direttamente nel Portachiavi.
+        keychain.save_session(kc["service"], kc["session_account"], context.storage_state())
         # Stesso user agent anche per le chiamate dirette della fase 2.
         META_FILE.write_text(json.dumps({"user_agent": page.evaluate("navigator.userAgent")}))
         print(f"\nURL finale: {page.url}")
         browser.close()
 
     out.close()
-    print(f"Sessione salvata in {SESSION_FILE.relative_to(ROOT)} (permessi 600, ignorata da git)")
+    print(f"Sessione salvata nel Portachiavi (servizio {kc['service']}, account {kc['session_account']})")
+    if login_only:
+        capture_file.unlink(missing_ok=True)
+        return 0
     print(f"{count} chiamate registrate in {capture_file.relative_to(ROOT)}")
-    print("Ora lancia: python discovery/summarize.py")
+    print("Ora lancia: .venv/bin/python discovery/summarize.py")
     return 0
 
 

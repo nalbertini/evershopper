@@ -13,7 +13,6 @@ from .everli.client import (
     EverliError,
     PlaywrightTransport,
     SessionExpired,
-    load_session,
     local_storage_value,
 )
 from .everli.offers import check_endpoint, iter_pages, offers_from_pages
@@ -32,10 +31,15 @@ def fetch_offers(cfg: dict, from_json: list[str] | None = None, save: bool = Tru
         pages = [json.loads(Path(p).read_text(encoding="utf-8")) for p in from_json]
         source, n_requests = "file", 0
     else:
-        session_file = config.resolve(ev["session_file"])
-        state = load_session(session_file)
+        kc = ev["keychain"]
+        state = keychain.load_session(kc["service"], kc["session_account"])
+        if not state:
+            raise SessionExpired("Sessione Everli non trovata nel Portachiavi: lancia discovery/discover.py --login")
         meta_file = config.resolve(ev["meta_file"])
-        user_agent = json.loads(meta_file.read_text())["user_agent"] if meta_file.exists() else None
+        # Senza lo user agent del browser Playwright si presenterebbe come "Playwright/…": meglio fermarsi.
+        user_agent = json.loads(meta_file.read_text()).get("user_agent") if meta_file.exists() else None
+        if not user_agent:
+            raise SessionExpired("User agent del browser non salvato: lancia discovery/discover.py --login")
         headers = dict(ep.get("headers") or {})
         auth = ep.get("auth") or {}
         if auth.get("type") == "local_storage_bearer":
@@ -45,7 +49,7 @@ def fetch_offers(cfg: dict, from_json: list[str] | None = None, save: bool = Tru
             headers["Authorization"] = f"Bearer {token}"
         lim = ev["limits"]
         with PlaywrightTransport(
-            session_file, user_agent=user_agent, extra_headers=headers, timeout_s=lim["timeout"]
+            state, user_agent=user_agent, extra_headers=headers, timeout_s=lim["timeout"]
         ) as transport:
             client = EverliClient(
                 transport,

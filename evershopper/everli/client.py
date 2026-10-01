@@ -11,7 +11,6 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Protocol
 
 log = logging.getLogger(__name__)
@@ -27,6 +26,10 @@ class SessionExpired(EverliError):
 
 class RequestBudgetExceeded(EverliError):
     pass
+
+
+class ConnectionFailed(EverliError):
+    """Everli non raggiungibile (rete assente, DNS, timeout): nessuna risposta ricevuta."""
 
 
 @dataclass
@@ -95,12 +98,6 @@ class EverliClient:
             raise EverliError(f"Risposta non JSON da {url}") from exc
 
 
-def load_session(session_file: Path) -> dict:
-    if not session_file.exists():
-        raise SessionExpired(f"Sessione non trovata ({session_file.name}): lancia discovery/discover.py")
-    return json.loads(session_file.read_text(encoding="utf-8"))
-
-
 def local_storage_value(state: dict, key: str) -> str | None:
     for origin in state.get("origins", []):
         for item in origin.get("localStorage", []):
@@ -114,13 +111,13 @@ class PlaywrightTransport:
 
     def __init__(
         self,
-        session_file: Path,
+        storage_state: dict,
         *,
         user_agent: str | None = None,
         extra_headers: dict | None = None,
         timeout_s: float = 20,
     ):
-        self.session_file = session_file
+        self.storage_state = storage_state
         self.user_agent = user_agent
         self.extra_headers = extra_headers or {}
         self.timeout_ms = timeout_s * 1000
@@ -130,7 +127,7 @@ class PlaywrightTransport:
 
         self._pw = sync_playwright().start()
         self._ctx = self._pw.request.new_context(
-            storage_state=str(self.session_file),
+            storage_state=self.storage_state,
             user_agent=self.user_agent,
             extra_http_headers=self.extra_headers,
             timeout=self.timeout_ms,
@@ -142,12 +139,18 @@ class PlaywrightTransport:
         self._pw.stop()
 
     def request(self, method, url, params, headers, body) -> HttpResult:
-        res = self._ctx.fetch(
-            url,
-            method=method,
-            params=params,
-            headers=headers,
-            data=json.dumps(body) if body else None,
-            max_redirects=0,  # un redirect verso il login va visto, non seguito
-        )
+        from playwright.sync_api import Error as PlaywrightError
+
+        try:
+            res = self._ctx.fetch(
+                url,
+                method=method,
+                params=params,
+                headers=headers,
+                data=json.dumps(body) if body else None,
+                max_redirects=0,  # un redirect verso il login va visto, non seguito
+            )
+        except PlaywrightError as exc:
+            # Solo il primo rigo: il messaggio di Playwright può includere i dettagli della richiesta.
+            raise ConnectionFailed(f"Everli non raggiungibile: {str(exc).splitlines()[0]}") from None
         return HttpResult(res.status, res.headers, res.text())

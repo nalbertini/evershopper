@@ -10,7 +10,7 @@ Gira solo in locale, su macOS. Requisiti e fasi sono in [SPEC.md](SPEC.md).
 - [x] Fase 3 – lettura Promemoria (helper Swift da compilare sul Mac)
 - [x] Fase 4 – matching (locale + seconda passata opzionale con Claude)
 - [x] Fase 5 – output e notifiche (comando `run`)
-- [ ] Fase 6 – launchd + Portachiavi
+- [x] Fase 6 – launchd + Portachiavi (`schedule`, `doctor`)
 
 ## Fase 1: discovery (sul Mac)
 
@@ -19,12 +19,12 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
 
-python discovery/discover.py     # browser visibile: login a mano, poi pagina offerte
-python discovery/summarize.py    # elenco endpoint, ★ = candidati offerte
+.venv/bin/python discovery/discover.py     # browser visibile: login a mano, poi pagina offerte
+.venv/bin/python discovery/summarize.py    # elenco endpoint, ★ = candidati offerte
 ```
 
 Durante `discover.py`:
-1. fai login a mano (solo la prima volta; la sessione viene salvata in `.state/everli-session.json`);
+1. fai login a mano (solo la prima volta; la sessione viene salvata nel Portachiavi);
 2. scegli il supermercato abituale e apri la sezione offerte/promozioni;
 3. scorri e passa alla pagina successiva, così da catturare anche la paginazione;
 4. premi INVIO nel terminale.
@@ -126,8 +126,41 @@ vecchie vengono tolte, e lo script non tocca nient'altro. Serve l'helper ricompi
 La prima volta macOS chiede il permesso di Automazione per Note (e Mail): concedilo.
 Sessione Everli scaduta → notifica, codice di uscita 2, nessun nuovo tentativo.
 
+## Fase 6: esecuzione settimanale
+
+```bash
+.venv/bin/python -m evershopper doctor              # controllo generale: ✓ / ✗ con cosa fare
+.venv/bin/python -m evershopper schedule install    # LaunchAgent con giorno e ora di config.yaml
+.venv/bin/python -m evershopper schedule run-now    # prova subito sotto launchd
+.venv/bin/python -m evershopper schedule status     # prossima esecuzione, ultimo codice di uscita
+.venv/bin/python -m evershopper schedule uninstall
+```
+
+- Giorno e ora in `config.yaml` → `schedule` (default sabato 8:47; il giorno anche per nome).
+  Dopo una modifica rilancia `schedule install`.
+- Il LaunchAgent (`~/Library/LaunchAgents/it.evershopper.weekly.plist`) lancia
+  `.venv/bin/python -m evershopper run`; se il Mac dorme a quell'ora, parte al risveglio.
+- Se al risveglio la rete non è ancora pronta: un solo nuovo tentativo dopo 90 s.
+- Codici di uscita: 0 ok, 1 errore, 2 sessione Everli scaduta (notifica, nessun nuovo tentativo:
+  rifai il login con `.venv/bin/python discovery/discover.py --login`).
+- Log: `logs/evershopper.log` (3 × 500 KB) e `logs/launchd.log` (ruotato oltre 1 MB).
+- Lancia `schedule run-now` una volta mentre sei al Mac: eventuali richieste di permesso
+  (Note, notifiche) compaiono a nome del processo lanciato da launchd e vanno concesse.
+
+## Segreti
+
+| Cosa | Dove |
+|------|------|
+| Password Everli | da nessuna parte: il login si fa a mano nel browser |
+| Sessione Everli (cookie) | Portachiavi, servizio `evershopper`, account `everli-session` (la scrive `discover.py`) |
+| Chiave API Claude (facoltativa) | Portachiavi, servizio `evershopper`, account `anthropic-api-key` |
+
+Per vederli o cancellarli: app Accesso Portachiavi, cerca «evershopper».
+
 ## Privacy e termini d'uso
 - La password non passa mai dallo script: il login si fa nel browser.
-- `.state/` (cookie di sessione) e `discovery/captures/` sono in `.gitignore` e restano sul Mac.
-  Nelle catture gli header con cookie/token sono oscurati.
+- I cookie di sessione stanno nel Portachiavi; `.state/` (solo lo user agent del browser),
+  `discovery/captures/`, `cache/`, `logs/` e `config.yaml` sono in `.gitignore` e restano sul Mac.
+  Nelle catture gli header con cookie/token sono oscurati. `doctor` verifica che nel repository
+  non ci siano file privati né chiavi API.
 - Uso personale, poche richieste, a ritmo umano e senza parallelismo, come richiesto dai termini Everli.

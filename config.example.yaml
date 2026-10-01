@@ -5,8 +5,10 @@ everli:
   store:
     id: ""                # DA DEFINIRE: ID o slug del supermercato
     name: ""              # solo per i messaggi, es. "Esselunga Via Roma"
-  session_file: .state/everli-session.json
-  meta_file: .state/everli-meta.json     # user agent salvato da discover.py
+  keychain:               # la sessione (cookie) sta nel Portachiavi, la salva discover.py
+    service: evershopper
+    session_account: everli-session
+  meta_file: .state/everli-meta.json     # user agent salvato da discover.py (non è un segreto)
 
   endpoint:
     url: ""               # DA DEFINIRE, es. https://api.everli.com/.../stores/{store_id}/promotions
@@ -52,10 +54,10 @@ reminders:
   app: bin/EvershopperReminders.app
   helper: bin/reminders-helper
 
-schedule:                 # fase 6
-  weekday: 6              # 0 = domenica … 6 = sabato
-  hour: 9
-  minute: 0
+schedule:                 # esecuzione settimanale (python -m evershopper schedule install)
+  weekday: sabato         # 0 = domenica … 6 = sabato, oppure il nome del giorno
+  hour: 8
+  minute: 47              # non allo scoccare dell'ora, per non sembrare un robot
 
 matching:
   synonyms: {}            # aggiunte ai sinonimi di base, es. {"latte": ["latte uht"]}
