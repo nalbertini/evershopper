@@ -57,7 +57,17 @@ def fetch_offers(cfg: dict, from_json: list[str] | None = None, save: bool = Tru
                 min_delay=lim["min_delay"],
                 max_delay=lim["max_delay"],
             )
-            pages = [data for _, data in iter_pages(client, ep, store_id)]
+            pages = []
+            threshold = float((cfg.get("output") or {}).get("min_discount_pct") or 0)
+            for _, data in iter_pages(client, ep, store_id):
+                pages.append(data)
+                # Offerte ordinate per sconto decrescente: quando una pagina intera scende sotto
+                # la soglia, le successive non servono. Meno richieste a Everli.
+                if ep.get("sorted_by_discount") and threshold:
+                    page_offers = offers_from_pages([data], ep)
+                    if page_offers and max(o.discount_pct or 0 for o in page_offers) < threshold:
+                        log.info("Sconti sotto il %g%% da pagina %d: mi fermo", threshold, len(pages))
+                        break
         source, n_requests = "everli", client.requests
 
     offers = offers_from_pages(pages, ep)

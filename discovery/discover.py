@@ -124,6 +124,10 @@ def main() -> int:
         if IGNORED_HOSTS.search(urlsplit(request.url).netloc):
             return
         content_type = response.headers.get("content-type", "")
+        # Immagini, script, fogli di stile e font passano dal service worker come "fetch":
+        # non servono alla discovery e gonfierebbero la cattura.
+        if request.method == "GET" and "json" not in content_type:
+            return
         body_sample = body_file = None
         if "json" in content_type:
             try:

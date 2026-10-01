@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from ..models import Offer
@@ -19,9 +20,11 @@ class EndpointNotConfigured(EverliError):
 
 
 def get_path(obj: Any, path: str, default: Any = None) -> Any:
-    """Legge un percorso a punti, es. 'price.original' o 'images.0.url'."""
+    """Legge un percorso a punti, es. 'price.original' o 'images.0.url'; '.' è l'oggetto stesso."""
     if not path:
         return default
+    if path == ".":
+        return obj
     cur = obj
     for part in path.split("."):
         if isinstance(cur, dict):
@@ -74,8 +77,13 @@ def parse_offer(item: dict, ep: dict) -> Offer | None:
 
     oid = f("id")
     url = f("url")
-    if not url and oid is not None and ep.get("product_url_template"):
-        url = ep["product_url_template"].format(id=oid)
+    template = ep.get("product_url_template") or ""
+    if template and ("{url}" in template and url or "{url}" not in template and not url and oid is not None):
+        # {url} completa un link relativo ("/p/123"), {id} costruisce il link dall'identificativo.
+        url = template.format(id=oid, url=url or "")
+    until = f("valid_until")
+    if isinstance(until, (int, float)) and not isinstance(until, bool) and until > 1e9:
+        until = datetime.fromtimestamp(until / 1000 if until > 1e12 else until, timezone.utc).date().isoformat()
     brand = f("brand")
     return Offer(
         id=str(oid if oid is not None else name),
@@ -85,7 +93,7 @@ def parse_offer(item: dict, ep: dict) -> Offer | None:
         price_full=full,
         price_discounted=disc,
         discount_pct=pct,
-        valid_until=str(f("valid_until")) if f("valid_until") else None,
+        valid_until=str(until) if until else None,
         url=url,
     )
 
