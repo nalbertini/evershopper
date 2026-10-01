@@ -47,7 +47,7 @@ everli:
 
 reminders:
   list: Spesa
-  list_id: ""             # se ci sono più liste con lo stesso nome: id da `reminders --lists`
+  list_id: "17CDB086-12F2-4AAA-B64A-F61A633644B8"   # la «Spesa» in uso (ce ne sono due); id da `reminders --lists`
   backend: auto           # auto | app | eventkit | jxa (auto = il primo disponibile in quest'ordine)
   app: bin/EvershopperReminders.app
   helper: bin/reminders-helper
