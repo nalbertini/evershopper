@@ -69,8 +69,14 @@ matching:
     keychain_account: anthropic-api-key
 
 output:
-  channel: notification   # notification | note | email
-  min_discount_pct: 10
+  channels: [notification, note]   # notification | note | email
+  min_discount_pct: 10    # sconto minimo da segnalare
+  max_per_item: 2         # offerte mostrate per voce
+  title: Offerte Everli   # titolo della notifica e della nota (la nota viene aggiornata, non duplicata)
+  note_folder: ""         # cartella di Note (vuoto = cartella predefinita)
+  email_to: ""            # per il canale email (invia con Mail)
+  mark_reminders: false   # scrive "🏷️ In offerta: …" nelle note dei promemoria in offerta
+  marker: "🏷️ In offerta"
 
 paths:
   cache_dir: cache

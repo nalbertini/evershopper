@@ -4,6 +4,11 @@
 // Uso:
 //   reminders-helper --list Spesa [--list-id ID] [--out FILE]
 //   reminders-helper --lists      [--out FILE]   # elenca le liste con account e identificativo
+//   reminders-helper --mark FILE  [--out FILE]   # scrive/rimuove l'etichetta "in offerta"
+//
+// --mark legge {"marker", "list_ids", "marks": {id promemoria: testo}}: nelle liste indicate
+// toglie dalle note le righe che iniziano con il marcatore e lo riaggiunge solo ai promemoria
+// in `marks`. È l'unica modalità che scrive, e tocca solo quelle righe.
 //
 // Più liste possono avere lo stesso nome (account diversi): con il solo --list
 // vengono unite, con --list-id se ne sceglie una.
@@ -45,6 +50,23 @@ struct Lists: Codable {
 
 func info(_ c: EKCalendar) -> ListInfo {
     ListInfo(id: c.calendarIdentifier, title: c.title, source: c.source?.title ?? "")
+}
+
+struct MarkRequest: Codable {
+    let marker: String
+    let listIds: [String]
+    let marks: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case marker
+        case listIds = "list_ids"
+        case marks
+    }
+}
+
+struct MarkResult: Codable {
+    let updated: Int
+    let marked: Int
 }
 
 struct Failure: Codable {
@@ -95,6 +117,7 @@ func statusDescription() -> String {
 var listName: String?
 var listId: String?
 var listOnly = false
+var markPath: String?
 var args = CommandLine.arguments.dropFirst()
 while let arg = args.popFirst() {
     switch arg {
@@ -106,6 +129,9 @@ while let arg = args.popFirst() {
         listId = value
     case "--lists":
         listOnly = true
+    case "--mark":
+        guard let value = args.popFirst() else { fail("--mark richiede un file JSON", 2) }
+        markPath = value
     case "--out":
         guard let value = args.popFirst() else { fail("--out richiede un percorso", 2) }
         outPath = value
@@ -113,7 +139,7 @@ while let arg = args.popFirst() {
         fail("Argomento sconosciuto: \(arg)\nUso: reminders-helper --list NOME | --lists [--out FILE]", 2)
     }
 }
-if !listOnly && listName == nil { fail("Uso: reminders-helper --list NOME | --lists [--out FILE]", 2) }
+if !listOnly && markPath == nil && listName == nil { fail("Uso: reminders-helper --list NOME | --lists [--out FILE]", 2) }
 
 // --- permesso ---
 let store = EKEventStore()
@@ -142,6 +168,55 @@ if listOnly {
     exit(0)
 }
 
+func fetchIncomplete(_ cals: [EKCalendar]) -> [EKReminder] {
+    var result: [EKReminder]?
+    let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: cals)
+    store.fetchReminders(matching: predicate) { fetched in
+        result = fetched
+        semaphore.signal()
+    }
+    semaphore.wait()
+    guard let reminders = result else { fail("EventKit non ha restituito i promemoria", 5) }
+    return reminders
+}
+
+if let path = markPath {
+    guard let data = FileManager.default.contents(atPath: path),
+          let request = try? JSONDecoder().decode(MarkRequest.self, from: data),
+          !request.marker.isEmpty
+    else { fail("Richiesta --mark non valida: \(path)", 2) }
+    let targets = calendars.filter { request.listIds.contains($0.calendarIdentifier) }
+    if targets.isEmpty { fail("Nessuna delle liste da aggiornare è stata trovata", 4) }
+
+    var updated = 0
+    for r in fetchIncomplete(targets) {
+        let original = r.notes ?? ""
+        var lines = original.components(separatedBy: "\n")
+        let before = lines.count
+        lines.removeAll { $0.hasPrefix(request.marker) }
+        let mark = request.marks[r.calendarItemIdentifier]
+        if lines.count == before && mark == nil { continue }  // niente da togliere né da aggiungere
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        if let text = mark { lines.append("\(request.marker): \(text)") }
+        let notes = lines.joined(separator: "\n")
+        if notes == original { continue }
+        r.notes = notes.isEmpty ? nil : notes
+        do {
+            try store.save(r, commit: false)
+            updated += 1
+        } catch {
+            fail("Impossibile aggiornare «\(r.title ?? "")»: \(error.localizedDescription)", 5)
+        }
+    }
+    do {
+        try store.commit()
+    } catch {
+        fail("Impossibile salvare le modifiche: \(error.localizedDescription)", 5)
+    }
+    emit(MarkResult(updated: updated, marked: request.marks.count))
+    exit(0)
+}
+
 let matching = calendars.filter { c in
     if let id = listId, !id.isEmpty { return c.calendarIdentifier == id }
     return c.title == listName!
@@ -154,16 +229,7 @@ if matching.isEmpty {
 
 // --- lettura ---
 let iso = ISO8601DateFormatter()
-var reminders: [EKReminder]?
-let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: matching)
-store.fetchReminders(matching: predicate) { result in
-    reminders = result
-    semaphore.signal()
-}
-semaphore.wait()
-guard let fetched = reminders else { fail("EventKit non ha restituito i promemoria", 5) }
-
-let items = fetched
+let items = fetchIncomplete(matching)
     .sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
     .map { r -> Item in
         let due = r.dueDateComponents.flatMap { Calendar.current.date(from: $0) }.map { iso.string(from: $0) }

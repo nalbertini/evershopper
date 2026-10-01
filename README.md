@@ -9,7 +9,7 @@ Gira solo in locale, su macOS. Requisiti e fasi sono in [SPEC.md](SPEC.md).
 - [x] Fase 2 – fetch offerte + cache JSON (endpoint da definire in `config.yaml`)
 - [x] Fase 3 – lettura Promemoria (helper Swift da compilare sul Mac)
 - [x] Fase 4 – matching (locale + seconda passata opzionale con Claude)
-- [ ] Fase 5 – output e notifiche
+- [x] Fase 5 – output e notifiche (comando `run`)
 - [ ] Fase 6 – launchd + Portachiavi
 
 ## Fase 1: discovery (sul Mac)
@@ -103,6 +103,27 @@ security add-generic-password -s evershopper -a anthropic-api-key -w
 ```
 
 Il risultato è salvato in `cache/match-AAAA-MM-GG.json` per la fase 5.
+
+## Fase 5: riepilogo e notifiche
+
+```bash
+.venv/bin/python -m evershopper run --offline --dry-run   # prova: ultima cache, niente inviato
+.venv/bin/python -m evershopper run --offline             # ultima cache, invia sui canali configurati
+.venv/bin/python -m evershopper run                       # flusso completo (è il comando della fase 6)
+```
+
+`run` scarica le offerte solo se non c'è già la cache di oggi (`--refresh` per forzare), legge la lista,
+abbina, salva `cache/report-DATA.txt/.html` e invia il riepilogo sui canali di `output.channels`:
+- `notification`: notifica macOS con le voci in offerta, ordinate per sconto;
+- `note`: nota «Offerte Everli» in Note, aggiornata a ogni esecuzione (cartella in `output.note_folder`);
+- `email`: email con Mail a `output.email_to` (disattivata di default).
+
+Con `output.mark_reminders: true` le note dei promemoria in offerta ricevono una riga
+`🏷️ In offerta: -33% Granarolo Latte Intero 1 L 1,19 € fino al 08/10`; a ogni esecuzione le righe
+vecchie vengono tolte, e lo script non tocca nient'altro. Serve l'helper ricompilato (`sh helpers/build.sh`).
+
+La prima volta macOS chiede il permesso di Automazione per Note (e Mail): concedilo.
+Sessione Everli scaduta → notifica, codice di uscita 2, nessun nuovo tentativo.
 
 ## Privacy e termini d'uso
 - La password non passa mai dallo script: il login si fa nel browser.

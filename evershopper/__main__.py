@@ -4,6 +4,8 @@
     python -m evershopper show                        # mostra l'ultima cache
     python -m evershopper reminders                   # legge la lista della spesa da Promemoria
     python -m evershopper match                       # voci della lista in offerta (ultima cache)
+    python -m evershopper run                         # tutto il flusso + notifica/nota/email (fase 5)
+    python -m evershopper run --offline --dry-run     # prova senza Everli e senza inviare niente
 """
 
 from __future__ import annotations
@@ -15,16 +17,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import cache, config, keychain, llm, logs, matching, reminders
-from .everli.client import (
-    EverliClient,
-    EverliError,
-    PlaywrightTransport,
-    SessionExpired,
-    load_session,
-    local_storage_value,
-)
-from .everli.offers import check_endpoint, iter_pages, offers_from_pages
+from . import cache, config, logs, outputs, pipeline, report, reminders
+from .everli.client import EverliError, SessionExpired
 from .models import Offer
 from .notify import notify
 
@@ -46,53 +40,11 @@ def _print_offers(offers: list[Offer], limit: int) -> None:
 
 
 def cmd_fetch(cfg: dict, args) -> int:
-    ev = cfg["everli"]
-    ep, store_id = ev["endpoint"], str(ev["store"].get("id") or "")
-    check_endpoint(ep, store_id)
-
-    if args.from_json:
-        pages = [json.loads(Path(p).read_text(encoding="utf-8")) for p in args.from_json]
-        source, n_requests = "file", 0
-    else:
-        session_file = config.resolve(ev["session_file"])
-        state = load_session(session_file)
-        meta_file = config.resolve(ev["meta_file"])
-        user_agent = json.loads(meta_file.read_text())["user_agent"] if meta_file.exists() else None
-        headers = dict(ep.get("headers") or {})
-        auth = ep.get("auth") or {}
-        if auth.get("type") == "local_storage_bearer":
-            token = local_storage_value(state, auth.get("key", ""))
-            if not token:
-                raise SessionExpired("Token non trovato nella sessione salvata: rifai il login")
-            headers["Authorization"] = f"Bearer {token}"
-        lim = ev["limits"]
-        with PlaywrightTransport(
-            session_file, user_agent=user_agent, extra_headers=headers, timeout_s=lim["timeout"]
-        ) as transport:
-            client = EverliClient(
-                transport,
-                max_requests=lim["max_requests"],
-                min_delay=lim["min_delay"],
-                max_delay=lim["max_delay"],
-            )
-            pages = [data for _, data in iter_pages(client, ep, store_id)]
-        source, n_requests = "everli", client.requests
-
-    offers = offers_from_pages(pages, ep)
-    if args.no_cache:
-        path = None
-    else:
-        path = cache.save(
-            config.resolve(cfg["paths"]["cache_dir"]),
-            offers,
-            pages,
-            {"store": ev["store"], "source": source, "requests": n_requests, "pages": len(pages)},
-        )
+    offers, pages, n_requests, path = pipeline.fetch_offers(cfg, args.from_json, save=not args.no_cache)
     print(f"{len(offers)} offerte da {len(pages)} pagine ({n_requests} richieste)")
     if path:
         print(f"Cache: {path.relative_to(config.ROOT) if path.is_relative_to(config.ROOT) else path}")
     _print_offers(offers, args.limit)
-    log.info("fetch ok: %d offerte, %d richieste", len(offers), n_requests)
     return 0
 
 
@@ -145,27 +97,6 @@ def cmd_reminders(cfg: dict, args) -> int:
     return 0
 
 
-def _load_items(cfg: dict, path: Path | None) -> list:
-    if path:
-        return reminders.read_json(path)
-    rc = cfg["reminders"]
-    return reminders.read_list(
-        rc["list"], list_id=rc.get("list_id") or None, backend=rc["backend"],
-        app=config.resolve(rc["app"]), helper=config.resolve(rc["helper"]),
-    )
-
-
-def _load_offers(cfg: dict, path: Path | None) -> tuple[str, list[Offer]]:
-    if path:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return payload.get("fetched_at", path.name), [Offer.from_dict(o) for o in payload["offers"]]
-    latest = cache.load_latest(config.resolve(cfg["paths"]["cache_dir"]))
-    if not latest:
-        raise EverliError("Nessuna offerta in cache: lancia prima `python -m evershopper fetch`")
-    payload, offers = latest
-    return payload["fetched_at"], offers
-
-
 def _fmt_offer(o: Offer) -> str:
     pct = f"-{o.discount_pct:g}%" if o.discount_pct is not None else "    "
     price = f"{o.price_discounted:.2f} €" if o.price_discounted is not None else "? €"
@@ -175,36 +106,11 @@ def _fmt_offer(o: Offer) -> str:
 
 
 def cmd_match(cfg: dict, args) -> int:
-    mc = cfg["matching"]
-    fetched_at, offers = _load_offers(cfg, args.offers_json)
-    items = _load_items(cfg, args.reminders_json)
-    matcher = matching.Matcher(mc.get("synonyms"), mc.get("exclude"), int(mc.get("max_doubts", 8)))
-    results = matcher.match(items, offers)
-
-    lc = mc["llm"]
-    use_llm = lc["enabled"] if args.llm is None else args.llm
-    if use_llm and any(r.doubts for r in results):
-        key = keychain.get_secret(lc["keychain_service"], lc["keychain_account"])
-        if not key:
-            log.warning(
-                "Chiave API non trovata nel Portachiavi (servizio %s, account %s): salto la seconda passata",
-                lc["keychain_service"], lc["keychain_account"],
-            )
-        else:
-            try:
-                moved = llm.resolve(results, api_key=key, model=lc["model"], scope=lc.get("scope", "ambiguous"),
-                                    cache_dir=config.resolve(cfg["paths"]["cache_dir"]))
-                log.info("Claude ha confermato %d abbinamenti", moved)
-            except Exception as exc:  # la seconda passata è opzionale: mai bloccare l'esecuzione
-                log.warning("Seconda passata con Claude non riuscita (%s): restano i risultati locali",
-                            type(exc).__name__)
-
+    fetched_at, offers = pipeline.load_offers(cfg, args.offers_json)
+    items = pipeline.load_items(cfg, args.reminders_json)
+    results, use_llm = pipeline.run_matching(cfg, offers, items, args.llm)
     if not args.no_cache:
-        out_dir = config.resolve(cfg["paths"]["cache_dir"])
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / f"match-{datetime.now():%Y-%m-%d}.json"
-        out.write_text(json.dumps({"offers_fetched_at": fetched_at, "results": [r.to_dict() for r in results]},
-                                  ensure_ascii=False, indent=2), encoding="utf-8")
+        pipeline.save_match(cfg, fetched_at, results)
 
     threshold = float(cfg["output"].get("min_discount_pct") or 0)
     in_offer = [r for r in results if any((c.offer.discount_pct or 0) >= threshold for c in r.matches)]
@@ -235,6 +141,97 @@ def cmd_match(cfg: dict, args) -> int:
     return 0
 
 
+def _age_days(fetched_at: str) -> int | None:
+    try:
+        return (datetime.now() - datetime.fromisoformat(fetched_at)).days
+    except ValueError:
+        return None
+
+
+def _deliver(cfg: dict, rep: report.Report, text: str, html: str, items: list, from_file: bool) -> int:
+    """Invia il riepilogo sui canali configurati; restituisce quanti canali sono falliti."""
+    oc = cfg["output"]
+    channels = oc.get("channels") or []
+    channels = [channels] if isinstance(channels, str) else channels
+    failures = 0
+    for ch in channels:
+        try:
+            if ch == "notification":
+                outputs.send_notification(*report.notification(rep))
+            elif ch == "note":
+                res = outputs.write_note(oc["title"], html, oc.get("note_folder") or "")
+                print(f"Nota «{oc['title']}» {'aggiornata' if res == 'updated' else 'creata'} in Note")
+            elif ch == "email":
+                outputs.send_email(oc.get("email_to") or "", report.header(rep), text)
+                print(f"Email inviata a {oc['email_to']}")
+            else:
+                raise outputs.OutputError(f"Canale sconosciuto: {ch} (validi: notification, note, email)")
+        except outputs.OutputError as exc:
+            log.error("%s", exc)
+            failures += 1
+
+    if oc.get("mark_reminders"):
+        list_ids = sorted({i.list_id for i in items if i.list_id}) or [x for x in [cfg["reminders"].get("list_id")] if x]
+        if from_file:
+            log.warning("Lista letta da file: etichette sui promemoria non aggiornate")
+        elif not list_ids:
+            log.warning("Nessun identificativo di lista: etichette sui promemoria non aggiornate")
+        else:
+            try:
+                n = reminders.mark(report.mark_texts(rep), list_ids, marker=oc["marker"],
+                                   **pipeline.helper_paths(cfg))
+                print(f"Promemoria aggiornati: {n}")
+            except reminders.RemindersError as exc:
+                log.error("Etichette sui promemoria: %s", exc)
+                failures += 1
+    return failures
+
+
+def cmd_run(cfg: dict, args) -> int:
+    oc = cfg["output"]
+    warnings = []
+    today = pipeline.todays_cache(cfg)
+    if args.offline:
+        fetched_at, offers = pipeline.load_offers(cfg)
+    elif today and not args.refresh:
+        log.info("Offerte di oggi già in cache (%s): nessuna richiesta a Everli", today.name)
+        fetched_at, offers = pipeline.load_offers(cfg, today)
+    else:
+        _, _, _, path = pipeline.fetch_offers(cfg)
+        fetched_at, offers = pipeline.load_offers(cfg, path)
+    age = _age_days(fetched_at)
+    if age is not None and age > 7:
+        warnings.append(f"Le offerte sono di {age} giorni fa: potrebbero essere scadute")
+
+    items = pipeline.load_items(cfg, args.reminders_json)
+    results, _ = pipeline.run_matching(cfg, offers, items, args.llm)
+    pipeline.save_match(cfg, fetched_at, results)
+
+    rep = report.build(
+        results,
+        title=oc["title"],
+        offers_date=fetched_at,
+        store=cfg["everli"]["store"].get("name") or "",
+        threshold=float(oc.get("min_discount_pct") or 0),
+        max_per_item=int(oc.get("max_per_item") or 2),
+    )
+    rep.warnings = warnings
+    text, html = report.to_text(rep), report.to_html(rep)
+    out_dir = config.resolve(cfg["paths"]["cache_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = f"{datetime.now():%Y-%m-%d}"
+    (out_dir / f"report-{stamp}.txt").write_text(text, encoding="utf-8")
+    (out_dir / f"report-{stamp}.html").write_text(html, encoding="utf-8")
+    print(text)
+
+    if args.dry_run:
+        print("Prova (--dry-run): nessuna notifica, nota, email o etichetta.")
+        return 0
+    failures = _deliver(cfg, rep, text, html, items, from_file=args.reminders_json is not None)
+    log.info("run ok: %d voci in offerta, %d canali falliti", len(rep.lines), failures)
+    return EXIT_ERROR if failures else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="evershopper")
     parser.add_argument("--config", type=Path, help="percorso di config.yaml")
@@ -260,6 +257,13 @@ def main(argv: list[str] | None = None) -> int:
     p_match.add_argument("--no-llm", dest="llm", action="store_false", help="salta la seconda passata")
     p_match.add_argument("--no-cache", action="store_true", help="non salvare il risultato")
     p_match.add_argument("--limit", type=int, default=3, help="offerte mostrate per voce")
+    p_run = sub.add_parser("run", help="tutto il flusso: offerte, lista, abbinamento, riepilogo")
+    p_run.add_argument("--offline", action="store_true", help="usa l'ultima cache, senza contattare Everli")
+    p_run.add_argument("--refresh", action="store_true", help="riscarica anche se c'è già la cache di oggi")
+    p_run.add_argument("--dry-run", action="store_true", help="mostra il riepilogo senza inviarlo")
+    p_run.add_argument("--reminders-json", type=Path, metavar="FILE", help="lista da un file JSON")
+    p_run.add_argument("--llm", dest="llm", action="store_true", default=None, help="forza la seconda passata")
+    p_run.add_argument("--no-llm", dest="llm", action="store_false", help="salta la seconda passata")
     args = parser.parse_args(argv)
 
     try:
@@ -270,7 +274,8 @@ def main(argv: list[str] | None = None) -> int:
     logs.setup(config.resolve(cfg["paths"]["log_dir"]), args.verbose)
 
     try:
-        return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders, "match": cmd_match}[args.cmd](cfg, args)
+        return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders, "match": cmd_match,
+                "run": cmd_run}[args.cmd](cfg, args)
     except SessionExpired as exc:
         log.warning("Sessione scaduta: %s", exc)
         notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py")

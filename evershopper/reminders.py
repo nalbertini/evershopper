@@ -36,11 +36,16 @@ class ListNotFound(RemindersError):
     pass
 
 
+# Prefisso delle righe che lo script scrive nelle note (fase 5): in lettura vengono ignorate.
+MARKER_PREFIX = "🏷️"
+
+
 @dataclass
 class ShoppingItem:
     id: str
     title: str
     notes: str | None = None
+    list_id: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -80,8 +85,10 @@ def parse_output(text: str | dict) -> list[ShoppingItem]:
     for raw in data.get("items", []):
         title = (raw.get("title") or "").strip()
         if title:
-            notes = (raw.get("notes") or "").strip() or None
-            items.append(ShoppingItem(id=str(raw.get("id") or title), title=title, notes=notes))
+            lines = (raw.get("notes") or "").splitlines()
+            notes = "\n".join(line for line in lines if not line.startswith(MARKER_PREFIX)).strip() or None
+            items.append(ShoppingItem(id=str(raw.get("id") or title), title=title, notes=notes,
+                                      list_id=raw.get("listId") or raw.get("list_id")))
     return items
 
 
@@ -97,11 +104,12 @@ def _via_helper(helper: Path, list_name: str | None, run: Runner, list_id: str |
     return json.loads(res.stdout)
 
 
-def _via_app(app: Path, list_name: str | None, run: Runner, list_id: str | None = None) -> dict:
+def _via_app(app: Path, list_name: str | None, run: Runner, list_id: str | None = None,
+             args: list[str] | None = None) -> dict:
     """`open` non restituisce stdout né codice di uscita: il risultato passa da un file."""
     with tempfile.TemporaryDirectory(prefix="evershopper-") as tmp:
         out = Path(tmp) / "out.json"
-        args = _helper_args(list_name, list_id)
+        args = args if args is not None else _helper_args(list_name, list_id)
         res = run(["open", "-W", "-n", "-g", str(app), "--args", *args, "--out", str(out)])
         if res.returncode != 0:
             raise RemindersError(f"Impossibile avviare {app.name}: {(res.stderr or '').strip()}")
@@ -213,3 +221,37 @@ def list_lists(
 
 def read_json(path: Path) -> list[ShoppingItem]:
     return parse_output(path.read_text(encoding="utf-8"))
+
+
+def mark(
+    marks: dict[str, str],
+    list_ids: list[str],
+    *,
+    marker: str,
+    backend: str = "auto",
+    app: Path | None = None,
+    helper: Path | None = None,
+    run: Runner = _run,
+    system: str | None = None,
+) -> int:
+    """Scrive `marker: testo` nelle note dei promemoria in `marks` e lo toglie dagli altri
+    delle stesse liste. Restituisce quanti promemoria sono stati modificati."""
+    if not marker.startswith(MARKER_PREFIX):
+        raise RemindersError(f"Il marcatore deve iniziare con {MARKER_PREFIX}, per poterlo riconoscere e togliere")
+    if not list_ids:
+        raise RemindersError("Nessuna lista da aggiornare")
+    chosen = _choose(backend, app, helper, system)
+    if chosen == "jxa":
+        raise RemindersError("Per etichettare i promemoria serve l'helper: compila con helpers/build.sh")
+    with tempfile.TemporaryDirectory(prefix="evershopper-") as tmp:
+        req = Path(tmp) / "mark.json"
+        req.write_text(json.dumps({"marker": marker, "list_ids": sorted(set(list_ids)), "marks": marks},
+                                  ensure_ascii=False), encoding="utf-8")
+        if chosen == "app":
+            data = _via_app(app, None, run, args=["--mark", str(req)])
+        else:
+            res = run([str(helper), "--mark", str(req)])
+            _raise_for_code(res.returncode, (res.stderr or "").strip(), None)
+            data = json.loads(res.stdout)
+    log.info("Promemoria: %d aggiornati (%d etichettati)", data["updated"], data["marked"])
+    return int(data["updated"])
