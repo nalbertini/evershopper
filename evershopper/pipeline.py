@@ -76,7 +76,10 @@ def load_offers(cfg: dict, path: Path | None = None) -> tuple[str, list[Offer]]:
         return payload.get("fetched_at", path.name), [Offer.from_dict(o) for o in payload["offers"]]
     latest = cache.load_latest(config.resolve(cfg["paths"]["cache_dir"]))
     if not latest:
-        raise EverliError("Nessuna offerta in cache: lancia prima `python -m evershopper fetch`")
+        raise EverliError(
+            "Nessuna offerta in cache: lancia prima `python -m evershopper fetch` "
+            "(oppure prova con --offers-json examples/offerte-esempio.json)"
+        )
     payload, offers = latest
     return payload["fetched_at"], offers
 

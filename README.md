@@ -108,6 +108,7 @@ Il risultato è salvato in `cache/match-AAAA-MM-GG.json` per la fase 5.
 
 ```bash
 .venv/bin/python -m evershopper run --offline --dry-run   # prova: ultima cache, niente inviato
+.venv/bin/python -m evershopper run --offers-json examples/offerte-esempio.json   # offerte inventate, lista vera
 .venv/bin/python -m evershopper run --offline             # ultima cache, invia sui canali configurati
 .venv/bin/python -m evershopper run                       # flusso completo (è il comando della fase 6)
 ```

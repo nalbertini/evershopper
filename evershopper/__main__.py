@@ -191,7 +191,10 @@ def cmd_run(cfg: dict, args) -> int:
     oc = cfg["output"]
     warnings = []
     today = pipeline.todays_cache(cfg)
-    if args.offline:
+    if args.offers_json:
+        fetched_at, offers = pipeline.load_offers(cfg, args.offers_json)
+        warnings.append(f"Offerte da {args.offers_json.name}, non scaricate da Everli")
+    elif args.offline:
         fetched_at, offers = pipeline.load_offers(cfg)
     elif today and not args.refresh:
         log.info("Offerte di oggi già in cache (%s): nessuna richiesta a Everli", today.name)
@@ -200,7 +203,7 @@ def cmd_run(cfg: dict, args) -> int:
         _, _, _, path = pipeline.fetch_offers(cfg)
         fetched_at, offers = pipeline.load_offers(cfg, path)
     age = _age_days(fetched_at)
-    if age is not None and age > 7:
+    if age is not None and age > 7 and not args.offers_json:
         warnings.append(f"Le offerte sono di {age} giorni fa: potrebbero essere scadute")
 
     items = pipeline.load_items(cfg, args.reminders_json)
@@ -261,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--offline", action="store_true", help="usa l'ultima cache, senza contattare Everli")
     p_run.add_argument("--refresh", action="store_true", help="riscarica anche se c'è già la cache di oggi")
     p_run.add_argument("--dry-run", action="store_true", help="mostra il riepilogo senza inviarlo")
+    p_run.add_argument("--offers-json", type=Path, metavar="FILE",
+                       help="offerte da un file (es. examples/offerte-esempio.json), senza Everli")
     p_run.add_argument("--reminders-json", type=Path, metavar="FILE", help="lista da un file JSON")
     p_run.add_argument("--llm", dest="llm", action="store_true", default=None, help="forza la seconda passata")
     p_run.add_argument("--no-llm", dest="llm", action="store_false", help="salta la seconda passata")

@@ -99,7 +99,7 @@ def header(rep: Report) -> str:
 
 def to_text(rep: Report) -> str:
     out = [header(rep), ""]
-    out += [f"⚠️ {w}" for w in rep.warnings]
+    out += [f"⚠️ {w}" for w in rep.warnings] + ([""] if rep.warnings else [])
     if rep.lines:
         out.append(f"In offerta ({len(rep.lines)}):")
         for line in rep.lines:
