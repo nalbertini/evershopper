@@ -26,6 +26,7 @@ from playwright.sync_api import Request, Response, sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = ROOT / ".state"
 SESSION_FILE = STATE_DIR / "everli-session.json"
+META_FILE = STATE_DIR / "everli-meta.json"
 CAPTURE_DIR = ROOT / "discovery" / "captures"
 
 START_URL = "https://it.everli.com/"
@@ -39,6 +40,9 @@ IGNORED_HOSTS = re.compile(
 SENSITIVE_HEADERS = re.compile(r"(cookie|authorization|token|session|secret|csrf|xsrf)", re.I)
 SENSITIVE_PARAMS = re.compile(r"(token|session|secret|password|auth|key)", re.I)
 BODY_SAMPLE_CHARS = 4000
+# Le risposte JSON con queste chiavi vengono salvate intere, per provare la
+# mappatura della fase 2 senza rete: python -m evershopper fetch --from-json …
+OFFER_HINTS = re.compile(r"(price|prezzo|discount|sconto|promo|offer|offert)", re.I)
 
 
 def redact_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -57,7 +61,9 @@ def redact_url(url: str) -> tuple[str, dict[str, str]]:
 def main() -> int:
     STATE_DIR.mkdir(mode=0o700, exist_ok=True)
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-    capture_file = CAPTURE_DIR / f"capture-{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+    capture_file = CAPTURE_DIR / f"capture-{stamp}.jsonl"
+    bodies_dir = CAPTURE_DIR / f"bodies-{stamp}"
     out = capture_file.open("w", encoding="utf-8")
     count = 0
 
@@ -69,10 +75,15 @@ def main() -> int:
         if IGNORED_HOSTS.search(urlsplit(request.url).netloc):
             return
         content_type = response.headers.get("content-type", "")
-        body_sample = None
+        body_sample = body_file = None
         if "json" in content_type:
             try:
-                body_sample = response.text()[:BODY_SAMPLE_CHARS]
+                text = response.text()
+                body_sample = text[:BODY_SAMPLE_CHARS]
+                if OFFER_HINTS.search(text):
+                    bodies_dir.mkdir(exist_ok=True)
+                    body_file = bodies_dir / f"{count + 1:04d}.json"
+                    body_file.write_text(text, encoding="utf-8")
             except Exception as exc:  # body non disponibile (redirect, stream chiuso…)
                 body_sample = f"<unavailable: {exc}>"
         endpoint, params = redact_url(request.url)
@@ -87,6 +98,7 @@ def main() -> int:
             "request_headers": redact_headers(request.headers),
             "post_data": request.post_data[:BODY_SAMPLE_CHARS] if request.post_data else None,
             "body_sample": body_sample,
+            "body_file": str(body_file.relative_to(ROOT)) if body_file else None,
         }
         out.write(json.dumps(record, ensure_ascii=False) + "\n")
         out.flush()
@@ -115,6 +127,8 @@ def main() -> int:
 
         context.storage_state(path=str(SESSION_FILE))
         os.chmod(SESSION_FILE, 0o600)
+        # Stesso user agent anche per le chiamate dirette della fase 2.
+        META_FILE.write_text(json.dumps({"user_agent": page.evaluate("navigator.userAgent")}))
         print(f"\nURL finale: {page.url}")
         browser.close()
 

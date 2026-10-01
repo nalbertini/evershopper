@@ -65,6 +65,9 @@ def main() -> int:
         print(f"{method} {endpoint}")
         print(f"pagina: {recs[0]['page']}")
         print(f"esempi di parametri: {[r['params'] for r in recs[:3]]}")
+        files = [r["body_file"] for r in recs if r.get("body_file")]
+        if files:
+            print(f"risposte complete salvate: {', '.join(files[:5])}")
         try:
             shape = key_shape(json.loads(sample))
             print("struttura JSON:")

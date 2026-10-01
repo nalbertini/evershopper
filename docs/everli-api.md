@@ -2,6 +2,7 @@
 
 > Da compilare dopo aver lanciato `discovery/discover.py` e `discovery/summarize.py`.
 > Nessun cookie, token o dato personale in questo file.
+> Quanto emerge va poi riportato in `config.yaml` → `everli.endpoint` (vedi `config.example.yaml`).
 
 ## Data della discovery
 - 
@@ -14,10 +15,13 @@
 - Metodo e URL:
 - Parametri (store, categoria, ordinamento, lingua…):
 - Header necessari (nomi soltanto, valori oscurati):
-- Autenticazione: cookie di sessione / bearer / nessuna
+- Autenticazione: cookie di sessione / bearer in localStorage (nome chiave) / nessuna → `endpoint.auth`
 - Paginazione: (page/offset/cursor, dimensione pagina, come si capisce che è l'ultima)
 
-## Mappatura dei campi
+## Mappatura dei campi (→ `endpoint.fields`, percorsi a punti)
+- Percorso della lista prodotti (→ `endpoint.items_path`):
+- Prezzi in euro o in centesimi (→ `price_divisor`):
+
 | Campo spec       | Campo JSON |
 |------------------|------------|
 | nome prodotto    |            |

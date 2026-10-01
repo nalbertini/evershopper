@@ -6,7 +6,7 @@ Gira solo in locale, su macOS. Requisiti e fasi sono in [SPEC.md](SPEC.md).
 ## Stato
 - [x] Fase 1 – strumenti di discovery (`discovery/`)
 - [ ] Fase 1 – esito documentato in `docs/everli-api.md`
-- [ ] Fase 2 – fetch offerte + cache JSON
+- [x] Fase 2 – fetch offerte + cache JSON (endpoint da definire in `config.yaml`)
 - [ ] Fase 3 – lettura Promemoria
 - [ ] Fase 4 – matching
 - [ ] Fase 5 – output e notifiche
@@ -31,6 +31,28 @@ Durante `discover.py`:
 
 Poi compila `docs/everli-api.md` con quanto emerge da `summarize.py`
 (oppure chiedi a Claude Code di farlo leggendo l'ultima cattura).
+
+## Fase 2: fetch offerte
+
+L'endpoint non è scritto nel codice: si descrive in `config.yaml` (sezione `everli.endpoint`:
+URL, parametri, paginazione, percorso della lista e mappatura dei campi).
+
+```bash
+cp config.example.yaml config.yaml          # e completa le voci DA DEFINIRE
+# prova la mappatura sulle risposte salvate dalla discovery, senza contattare Everli:
+python -m evershopper fetch --no-cache --from-json discovery/captures/bodies-*/0012.json
+python -m evershopper fetch                 # esecuzione vera: cache in cache/offers-AAAA-MM-GG.json
+python -m evershopper show                  # rilegge l'ultima cache
+python -m pytest -q                         # test senza rete
+```
+
+Comportamento:
+- richieste in sequenza, pausa casuale di 2–6 s tra una e l'altra, al massimo `limits.max_requests` (30);
+  se si arriva al tetto si tengono le pagine già scaricate;
+- 401/403, redirect o pagina HTML → sessione scaduta: notifica macOS, uscita con codice 2, nessun nuovo tentativo;
+- 429 o errori del server → ci si ferma subito, nessun nuovo tentativo;
+- cache: `cache/offers-DATA.json` (offerte normalizzate, ordinate per sconto) + `cache/raw-DATA/` (risposte grezze);
+- log in `logs/evershopper.log` (rotazione 3 × 500 KB), senza header né cookie.
 
 ## Privacy e termini d'uso
 - La password non passa mai dallo script: il login si fa nel browser.
