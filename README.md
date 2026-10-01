@@ -59,15 +59,18 @@ Comportamento:
 Legge, in sola lettura, le voci non completate della lista `reminders.list` (default "Spesa").
 
 ```bash
-helpers/build.sh                       # compila bin/reminders-helper (serve Xcode o i Command Line Tools)
-bin/reminders-helper --lists           # la prima volta macOS chiede l'accesso a Promemoria
+sh helpers/build.sh                    # compila bin/reminders-helper e bin/EvershopperReminders.app
+python -m evershopper reminders --lists   # la prima volta macOS chiede l'accesso per «Evershopper Promemoria»
 python -m evershopper reminders        # elenco delle voci da comprare
 python -m evershopper reminders --json
 ```
 
-- Backend `auto`: usa l'helper Swift (EventKit) se è compilato, altrimenti `osascript` (JXA),
-  che non richiede compilazione ma è più lento e chiede il permesso di Automazione.
-- Permesso negato → notifica e indicazione di dove abilitarlo in Impostazioni di Sistema → Privacy e sicurezza.
+- Backend `auto`, nell'ordine: `app` (helper dentro un'app invisibile lanciata con `open`, che chiede
+  il permesso a nome proprio: funziona da qualsiasi terminale e da launchd), `eventkit` (helper
+  lanciato direttamente: il permesso è quello del terminale, e molti terminali vengono rifiutati
+  senza mostrare la richiesta), `jxa` (`osascript`, senza compilazione, permesso di Automazione).
+- Permesso negato → notifica; si riabilita in Impostazioni di Sistema → Privacy e sicurezza → Promemoria.
+  Per far ricomparire la richiesta: `tccutil reset Reminders it.evershopper.reminders-helper`.
 - Lista inesistente → errore con l'elenco delle liste disponibili.
 
 ## Privacy e termini d'uso

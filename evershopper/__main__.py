@@ -108,12 +108,21 @@ def cmd_show(cfg: dict, args) -> int:
 def cmd_reminders(cfg: dict, args) -> int:
     rc = cfg["reminders"]
     list_name = args.list or rc["list"]
+    where = {
+        "backend": args.backend or rc["backend"],
+        "app": config.resolve(rc["app"]),
+        "helper": config.resolve(rc["helper"]),
+    }
+    if args.lists:
+        names = reminders.list_names(**where)
+        print("Liste di Promemoria:")
+        for name in names:
+            print(f"  - {name}" + ("   ← configurata" if name == rc["list"] else ""))
+        return 0
     if args.from_json:
         items = reminders.read_json(args.from_json)
     else:
-        items = reminders.read_list(
-            list_name, backend=args.backend or rc["backend"], helper=config.resolve(rc["helper"])
-        )
+        items = reminders.read_list(list_name, **where)
     if args.json:
         print(json.dumps([i.to_dict() for i in items], ensure_ascii=False, indent=2))
         return 0
@@ -137,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     p_show.add_argument("--limit", type=int, default=20)
     p_rem = sub.add_parser("reminders", help="legge la lista della spesa da Promemoria")
     p_rem.add_argument("--list", help="nome della lista (default da config.yaml)")
-    p_rem.add_argument("--backend", choices=["auto", "eventkit", "jxa"])
+    p_rem.add_argument("--backend", choices=list(reminders.BACKENDS))
+    p_rem.add_argument("--lists", action="store_true", help="elenca le liste disponibili")
     p_rem.add_argument("--from-json", type=Path, metavar="FILE", help="usa un output salvato dell'helper")
     p_rem.add_argument("--json", action="store_true", help="stampa in JSON")
     args = parser.parse_args(argv)

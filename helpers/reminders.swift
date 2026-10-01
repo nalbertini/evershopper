@@ -1,9 +1,13 @@
 // Legge da Promemoria (EventKit) gli elementi non completati di una lista
-// e li stampa in JSON su stdout. Solo lettura.
+// e li restituisce in JSON. Solo lettura.
 //
 // Uso:
-//   reminders-helper --list Spesa
-//   reminders-helper --lists          # elenca le liste disponibili
+//   reminders-helper --list Spesa [--out FILE]
+//   reminders-helper --lists      [--out FILE]   # elenca le liste disponibili
+//
+// Con --out il risultato (o l'errore, come {"error", "code"}) va nel file invece
+// che su stdout: serve quando l'helper gira come app lanciata da `open`, che non
+// restituisce né stdout né codice di uscita.
 //
 // Codici di uscita: 0 ok, 2 uso errato, 3 accesso negato, 4 lista non trovata, 5 errore EventKit.
 
@@ -24,18 +28,52 @@ struct Output: Codable {
     let items: [Item]
 }
 
+struct Lists: Codable {
+    let lists: [String]
+}
+
+struct Failure: Codable {
+    let error: String
+    let code: Int32
+}
+
+var outPath: String?
+
+func emit<T: Encodable>(_ value: T) {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    guard let data = try? encoder.encode(value) else {
+        FileHandle.standardError.write("Impossibile serializzare il risultato in JSON\n".data(using: .utf8)!)
+        exit(5)
+    }
+    if let path = outPath {
+        do {
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            FileHandle.standardError.write("Impossibile scrivere \(path): \(error)\n".data(using: .utf8)!)
+            exit(5)
+        }
+    } else {
+        print(String(data: data, encoding: .utf8)!)
+    }
+}
+
 func fail(_ message: String, _ code: Int32) -> Never {
     FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+    if outPath != nil { emit(Failure(error: message, code: code)) }
     exit(code)
 }
 
-func printJSON<T: Encodable>(_ value: T) {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    guard let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) else {
-        fail("Impossibile serializzare il risultato in JSON", 5)
+// Confronto sul valore numerico: .authorized e .fullAccess condividono il 3.
+func statusDescription() -> String {
+    switch EKEventStore.authorizationStatus(for: .reminder).rawValue {
+    case 0: return "non ancora richiesto"
+    case 1: return "limitato da un profilo o da Tempo di utilizzo"
+    case 2: return "negato"
+    case 3: return "concesso"
+    case 4: return "solo scrittura"
+    default: return "sconosciuto"
     }
-    print(text)
 }
 
 // --- argomenti ---
@@ -49,11 +87,14 @@ while let arg = args.popFirst() {
         listName = value
     case "--lists":
         listOnly = true
+    case "--out":
+        guard let value = args.popFirst() else { fail("--out richiede un percorso", 2) }
+        outPath = value
     default:
-        fail("Argomento sconosciuto: \(arg)\nUso: reminders-helper --list NOME | --lists", 2)
+        fail("Argomento sconosciuto: \(arg)\nUso: reminders-helper --list NOME | --lists [--out FILE]", 2)
     }
 }
-if !listOnly && listName == nil { fail("Uso: reminders-helper --list NOME | --lists", 2) }
+if !listOnly && listName == nil { fail("Uso: reminders-helper --list NOME | --lists [--out FILE]", 2) }
 
 // --- permesso ---
 let store = EKEventStore()
@@ -72,13 +113,13 @@ if #available(macOS 14.0, *) {
 }
 semaphore.wait()
 if !granted {
-    let detail = accessError.map { " (\($0.localizedDescription))" } ?? ""
-    fail("Accesso a Promemoria negato\(detail). Abilitalo in Impostazioni di Sistema → Privacy e sicurezza → Promemoria.", 3)
+    let detail = accessError.map { ", \($0.localizedDescription)" } ?? ""
+    fail("Accesso a Promemoria negato (stato: \(statusDescription())\(detail)).", 3)
 }
 
 let calendars = store.calendars(for: .reminder)
 if listOnly {
-    printJSON(calendars.map { $0.title }.sorted())
+    emit(Lists(lists: calendars.map { $0.title }.sorted()))
     exit(0)
 }
 
@@ -115,4 +156,4 @@ let items = fetched
     }
     .filter { !$0.title.isEmpty }
 
-printJSON(Output(list: listName!, items: items))
+emit(Output(list: listName!, items: items))

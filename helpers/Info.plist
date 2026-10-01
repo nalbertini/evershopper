@@ -5,7 +5,22 @@
     <key>CFBundleIdentifier</key>
     <string>it.evershopper.reminders-helper</string>
     <key>CFBundleName</key>
-    <string>evershopper reminders helper</string>
+    <string>Evershopper Promemoria</string>
+    <key>CFBundleDisplayName</key>
+    <string>Evershopper Promemoria</string>
+    <key>CFBundleExecutable</key>
+    <string>reminders-helper</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <!-- Nessuna icona nel Dock e nessuna finestra: l'app legge, scrive il JSON ed esce. -->
+    <key>LSUIElement</key>
+    <true/>
     <key>NSRemindersUsageDescription</key>
     <string>Legge la lista della spesa per confrontarla con le offerte Everli.</string>
     <key>NSRemindersFullAccessUsageDescription</key>

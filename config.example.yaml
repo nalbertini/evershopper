@@ -47,7 +47,8 @@ everli:
 
 reminders:
   list: Spesa
-  backend: auto           # auto | eventkit | jxa (auto = helper Swift se compilato, altrimenti osascript)
+  backend: auto           # auto | app | eventkit | jxa (auto = il primo disponibile in quest'ordine)
+  app: bin/EvershopperReminders.app
   helper: bin/reminders-helper
 
 schedule:                 # fase 6

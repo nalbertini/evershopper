@@ -81,3 +81,59 @@ def test_read_json(tmp_path):
     f = tmp_path / "lista.json"
     f.write_text(HELPER_OUTPUT)
     assert [i.title for i in reminders.read_json(f)] == ["Latte", "Pasta"]
+
+
+class FakeOpen:
+    """Simula `open -W … --args … --out FILE`: scrive nel file come farebbe l'app."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def __call__(self, cmd):
+        self.calls.append(cmd)
+        if self.payload is not None:
+            out = cmd[cmd.index("--out") + 1]
+            with open(out, "w") as f:
+                f.write(json.dumps(self.payload))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+@pytest.fixture
+def app(tmp_path):
+    a = tmp_path / "EvershopperReminders.app"
+    a.mkdir()
+    return a
+
+
+def test_auto_prefers_app(app, helper):
+    run = FakeOpen(json.loads(HELPER_OUTPUT))
+    items = read_list("Spesa", app=app, helper=helper, run=run, system="Darwin")
+    cmd = run.calls[0]
+    assert cmd[:5] == ["open", "-W", "-n", "-g", str(app)]
+    assert cmd[5:8] == ["--args", "--list", "Spesa"]
+    assert [i.title for i in items] == ["Latte", "Pasta"]
+
+
+@pytest.mark.parametrize("code,exc", [(3, RemindersAccessDenied), (4, ListNotFound), (5, RemindersError)])
+def test_app_errors_from_file(app, code, exc):
+    run = FakeOpen({"error": "msg", "code": code})
+    with pytest.raises(exc):
+        read_list("Spesa", app=app, run=run, system="Darwin")
+
+
+def test_app_without_result(app):
+    with pytest.raises(RemindersError, match="non ha prodotto risultati"):
+        read_list("Spesa", app=app, run=FakeOpen(None), system="Darwin")
+
+
+def test_access_denied_message_names_the_app(app):
+    with pytest.raises(RemindersAccessDenied, match="Evershopper Promemoria"):
+        read_list("Spesa", app=app, run=FakeOpen({"error": "negato", "code": 3}), system="Darwin")
+
+
+def test_list_names(app, helper):
+    assert reminders.list_names(app=app, run=FakeOpen({"lists": ["Casa", "Spesa"]}), system="Darwin") == ["Casa", "Spesa"]
+    run = FakeRun(stdout=json.dumps({"lists": ["Spesa"]}))
+    assert reminders.list_names(backend="eventkit", helper=helper, run=run, system="Darwin") == ["Spesa"]
+    assert run.calls == [[str(helper), "--lists"]]
