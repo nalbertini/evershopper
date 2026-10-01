@@ -29,8 +29,18 @@ Durante `discover.py`:
 3. scorri e passa alla pagina successiva, così da catturare anche la paginazione;
 4. premi INVIO nel terminale.
 
-Poi compila `docs/everli-api.md` con quanto emerge da `summarize.py`
-(oppure chiedi a Claude Code di farlo leggendo l'ultima cattura).
+Poi lascia che lo script ricavi da solo la configurazione dell'endpoint:
+
+```bash
+.venv/bin/python -m evershopper autoconfig --dry-run   # mostra la proposta e un'anteprima delle offerte
+.venv/bin/python -m evershopper autoconfig             # scrive config.yaml (copia del precedente in .bak) e docs/everli-api.md
+```
+
+`autoconfig` lavora solo sulla cattura salvata, senza contattare Everli: sceglie l'endpoint JSON con la
+lista di prodotti con prezzi chiamato più volte, riconosce la paginazione (pagina, offset; un cursore viene
+segnalato), il percorso della lista, i campi (nome, marca, formato, prezzo pieno e scontato, sconto,
+validità, link), i prezzi in centesimi e l'ordinamento per sconto, e verifica il risultato facendo girare
+il parser vero sulle risposte catturate. Se la verifica non convince non scrive niente.
 
 ## Fase 2: fetch offerte
 
@@ -51,6 +61,8 @@ Comportamento:
   se si arriva al tetto si tengono le pagine già scaricate;
 - 401/403, redirect o pagina HTML → sessione scaduta: notifica macOS, uscita con codice 2, nessun nuovo tentativo;
 - 429 o errori del server → ci si ferma subito, nessun nuovo tentativo;
+- con `sorted_by_discount: true` (lo imposta `autoconfig` se le offerte risultano ordinate per sconto)
+  ci si ferma appena una pagina intera è sotto `output.min_discount_pct`: meno richieste;
 - cache: `cache/offers-DATA.json` (offerte normalizzate, ordinate per sconto) + `cache/raw-DATA/` (risposte grezze);
 - log in `logs/evershopper.log` (rotazione 3 × 500 KB), senza header né cookie.
 

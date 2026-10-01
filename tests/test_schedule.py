@@ -202,3 +202,52 @@ def test_launchd_log_rotation(tmp_path):
     big.write_bytes(b"x" * (logs.LAUNCHD_MAX_BYTES + 1))
     logs.rotate_launchd_log(tmp_path)
     assert not big.exists() and (tmp_path / "launchd.log.1").exists()
+
+
+def test_fetch_stops_when_page_below_threshold(monkeypatch, tmp_path):
+    from evershopper import config
+    from evershopper.everli import client as client_mod
+
+    def page(discounts, n):
+        return {"data": [{"id": f"{n}-{i}", "name": f"P{n}{i}", "price": {"o": 100, "c": 100 - d}}
+                         for i, d in enumerate(discounts)]}
+    responses = [page([40, 30], 1), page([15, 12], 2), page([8, 5], 3), page([4, 2], 4)]
+    calls = []
+
+    class FakeTransport:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def request(self, method, url, params, headers, body):
+            calls.append(params["page"])
+            return client_mod.HttpResult(200, {"content-type": "application/json"}, json.dumps(responses.pop(0)))
+
+    meta = tmp_path / "meta.json"
+    meta.write_text('{"user_agent": "Mozilla/5.0"}')
+    c = config.load()
+    c["everli"]["meta_file"] = str(meta)
+    c["everli"]["endpoint"].update({
+        "url": "https://x/api/offers", "items_path": "data", "sorted_by_discount": True,
+        "pagination": {"type": "page", "param": "page", "start": 1, "size": 2, "max_pages": 10},
+        "fields": {"id": "id", "name": "name", "price_full": "price.o", "price_discounted": "price.c"},
+    })
+    c["everli"]["limits"].update(min_delay=0, max_delay=0)
+    c["output"]["min_discount_pct"] = 10
+    monkeypatch.setattr(keychain, "load_session", lambda *a, **k: {"cookies": [], "origins": []})
+    monkeypatch.setattr(pipeline, "PlaywrightTransport", FakeTransport)
+    offers, pages, n, _ = pipeline.fetch_offers(c, save=False)
+    assert calls == [1, 2, 3]  # la pagina 3 è tutta sotto il 10%: niente pagina 4
+    assert n == 3 and len(pages) == 3 and len(offers) == 6
+
+    # senza ordinamento per sconto si va avanti fino alla fine
+    responses[:] = [page([40, 30], 1), page([8, 5], 2), page([4], 3)]
+    calls.clear()
+    c["everli"]["endpoint"]["sorted_by_discount"] = False
+    pipeline.fetch_offers(c, save=False)
+    assert calls == [1, 2, 3]

@@ -39,7 +39,8 @@ everli:
       valid_until: ""
       url: ""
     price_divisor: 1      # 100 se i prezzi sono in centesimi
-    product_url_template: ""   # se `url` manca, es. https://it.everli.com/s/.../p/{id}
+    product_url_template: ""   # {id} se `url` manca, oppure https://dominio{url} se `url` è relativo
+    sorted_by_discount: false  # true = ci si ferma quando una pagina scende sotto output.min_discount_pct
 
   limits:
     max_requests: 30      # tetto per esecuzione

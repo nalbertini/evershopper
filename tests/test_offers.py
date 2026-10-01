@@ -172,3 +172,18 @@ def test_cache_roundtrip(tmp_path):
     assert path.name.startswith("offers-") and (tmp_path / path.name.replace("offers-", "raw-").removesuffix(".json")).is_dir()
     payload, loaded = cache.load_latest(tmp_path)
     assert payload["count"] == 1 and loaded == offers
+
+
+def test_relative_url_template_and_epoch_date():
+    ep = {**ENDPOINT, "product_url_template": "https://spesa.everli.com{url}",
+          "fields": {**ENDPOINT["fields"], "url": "link", "valid_until": "promo.ends"}}
+    item = product(1, "Latte", 200, 150)
+    item["link"] = "/p/1"
+    item["promo"]["ends"] = 1791504000  # 2026-10-09 UTC
+    [o] = offers_from_pages([page([item])], ep)
+    assert o.url == "https://spesa.everli.com/p/1" and o.valid_until == "2026-10-09"
+
+
+def test_root_list_items_path():
+    ep = {**ENDPOINT, "items_path": "."}
+    assert len(offers_from_pages([[product(1, "Latte", 200, 150)]], ep)) == 1

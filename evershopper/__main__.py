@@ -8,6 +8,7 @@
     python -m evershopper run --offline --dry-run     # prova senza Everli e senza inviare niente
     python -m evershopper schedule install            # esecuzione settimanale con launchd (fase 6)
     python -m evershopper doctor                      # controlla che sia tutto pronto
+    python -m evershopper autoconfig                  # ricava l'endpoint dall'ultima discovery
 """
 
 from __future__ import annotations
@@ -15,12 +16,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from . import cache, config, doctor, logs, outputs, pipeline, report, reminders, schedule
+import yaml
+
+from . import autoconfig, cache, config, doctor, keychain, logs, outputs, pipeline, report, reminders, schedule
 from .everli.client import ConnectionFailed, EverliError, SessionExpired
 from .models import Offer
 from .notify import notify
@@ -279,6 +283,72 @@ def cmd_schedule(cfg: dict, args) -> int:
     return 0
 
 
+def _jwt_like_key(state: dict | None) -> str:
+    """Nome della chiave di localStorage che sembra contenere un token (per l'header Authorization)."""
+    for origin in (state or {}).get("origins", []):
+        for item in origin.get("localStorage", []):
+            name, value = item.get("name", ""), str(item.get("value", ""))
+            if re.fullmatch(r"[\w-]+\.[\w-]+\.[\w-]+", value.strip('"')) or (
+                    re.search("token|auth", name, re.I) and len(value) > 20):
+                return name
+    return ""
+
+
+def cmd_autoconfig(cfg: dict, args) -> int:
+    capture_dir = config.ROOT / "discovery" / "captures"
+    capture = args.capture or autoconfig.latest_capture(capture_dir)
+    records = autoconfig.load_records(capture, config.ROOT)
+    prop = autoconfig.propose(records)
+    ep = prop.endpoint
+    if ep["auth"]["type"] == "local_storage_bearer":
+        kc = cfg["everli"]["keychain"]
+        key = _jwt_like_key(keychain.load_session(kc["service"], kc["session_account"]))
+        ep["auth"]["key"] = key
+        prop.notes.append(f"Token letto da localStorage, chiave «{key}»." if key else
+                          "Chiave del token in localStorage non trovata: va indicata in endpoint.auth.key.")
+    q = autoconfig.quality(prop)
+
+    print(f"Cattura: {capture.name}")
+    print(f"Endpoint: {ep['method']} {ep['url']}  ({prop.calls} chiamate, {len(prop.pages)} pagine diverse)")
+    pag = ep["pagination"]
+    print("Paginazione: " + ("nessuna" if pag["type"] == "none" else
+          f"{pag['type']} con «{pag['param']}» da {pag['start']}, ~{pag['size']} per pagina"))
+    print(f"Lista prodotti: {ep['items_path']}  ·  prezzi in {'centesimi' if ep['price_divisor'] == 100 else 'euro'}"
+          f"  ·  ordinate per sconto: {'sì' if ep['sorted_by_discount'] else 'no'}")
+    print("Campi:")
+    for k, v in ep["fields"].items():
+        print(f"  {k:<17} {v or '—'}")
+    for n in prop.notes:
+        print(f"Nota: {n}")
+    print(f"\nVerifica sulle risposte catturate: {q['offers']} offerte · con prezzo {q['with_prices']:.0%}"
+          f" · con prezzo pieno {q['with_full']:.0%} · con sconto {q['with_discount']:.0%}"
+          f" · prezzi coerenti {q['consistent']:.0%}")
+    _print_offers(prop.offers, args.limit)
+
+    ok = q["offers"] > 0 and q["with_prices"] >= 0.8 and q["consistent"] >= 0.9
+    if not ok:
+        print("\nIl risultato non è affidabile: non scrivo config.yaml. Incolla questo output a Claude.")
+        return EXIT_ERROR
+    if args.dry_run:
+        print("\nProva (--dry-run): config.yaml non modificato.")
+        return 0
+
+    path = args.config or config.DEFAULT
+    current = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+    current = current or {}
+    if path.exists():
+        path.with_name(path.name + ".bak").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    current.setdefault("everli", {})["endpoint"] = ep
+    path.write_text("# Endpoint ricavato da `python -m evershopper autoconfig`; il resto viene da config.example.yaml\n"
+                    + yaml.safe_dump(current, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    doc = config.ROOT / "docs" / "everli-api.md"
+    doc.write_text(autoconfig.api_doc(prop, capture.name, f"{datetime.now():%Y-%m-%d}"), encoding="utf-8")
+    print(f"\nScritti {path.name}" + (" (copia del precedente in .bak)" if path.with_name(path.name + '.bak').exists() else "")
+          + " e docs/everli-api.md")
+    print("Prossimo passo: .venv/bin/python -m evershopper fetch   (scarica le offerte vere, poche richieste)")
+    return 0
+
+
 def cmd_doctor(cfg: dict, args) -> int:
     return 0 if doctor.run(cfg) else EXIT_ERROR
 
@@ -320,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     p_sched = sub.add_parser("schedule", help="esecuzione settimanale con launchd")
     p_sched.add_argument("action", choices=["install", "uninstall", "status", "run-now"])
     sub.add_parser("doctor", help="controlla configurazione, permessi, Portachiavi e launchd")
+    p_auto = sub.add_parser("autoconfig", help="ricava l'endpoint delle offerte dall'ultima discovery")
+    p_auto.add_argument("--capture", type=Path, metavar="FILE", help="cattura da usare (default: l'ultima)")
+    p_auto.add_argument("--dry-run", action="store_true", help="mostra la proposta senza scrivere config.yaml")
+    p_auto.add_argument("--limit", type=int, default=10, help="offerte mostrate in anteprima")
     args = parser.parse_args(argv)
 
     try:
@@ -331,7 +405,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders, "match": cmd_match,
-                "run": cmd_run, "schedule": cmd_schedule, "doctor": cmd_doctor}[args.cmd](cfg, args)
+                "run": cmd_run, "schedule": cmd_schedule, "doctor": cmd_doctor,
+                "autoconfig": cmd_autoconfig}[args.cmd](cfg, args)
     except SessionExpired as exc:
         log.warning("Sessione scaduta: %s", exc)
         notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py --login")
@@ -341,6 +416,9 @@ def main(argv: list[str] | None = None) -> int:
         notify("Offerte Everli", "Accesso a Promemoria negato: controlla Privacy e sicurezza")
         return EXIT_ERROR
     except reminders.RemindersError as exc:
+        log.error("%s", exc)
+        return EXIT_ERROR
+    except autoconfig.AutoconfigError as exc:
         log.error("%s", exc)
         return EXIT_ERROR
     except schedule.ScheduleError as exc:
