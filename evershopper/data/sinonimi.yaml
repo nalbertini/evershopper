@@ -1,0 +1,34 @@
+# Sinonimi e esclusioni di base per l'abbinamento voce → prodotto.
+# Le chiavi sono voci della lista (minuscole, senza accenti). Si possono
+# aggiungere o sovrascrivere in config.yaml → matching.synonyms / matching.exclude.
+
+synonyms:
+  pelati: [pomodori pelati]
+  passata: [passata di pomodoro, passata pomodoro]
+  yogurt: [yoghurt]
+  acqua: [acqua minerale, acqua naturale, acqua frizzante]
+  detersivo piatti: [detersivo stoviglie, piatti]
+  detersivo lavatrice: [detersivo bucato, bucato]
+  carta igienica: [rotoli carta igienica]
+  carta cucina: [carta asciugatutto, asciugatutto, rotoli cucina]
+  scottona: [hamburger scottona]
+  macinato: [carne macinata, macinato bovino]
+  affettati: [prosciutto, salame, mortadella, bresaola]
+  tonno: [tonno in scatola, tonno olio]
+  caffe: [caffe macinato, caffe in grani, capsule caffe]
+  burro: [burro panna]
+  parmigiano: [parmigiano reggiano, grana padano]
+  grana: [grana padano, parmigiano reggiano]
+  biscotti: [frollini]
+  succo: [succo di frutta]
+  merendine: [snack, tortine, crostatine]
+
+# Parole che, presenti nel prodotto, escludono l'abbinamento con la voce.
+exclude:
+  latte: [detergente, struccante, solare, corpo, mani, viso, crema]
+  burro: [cacao, arachidi]
+  pane: [grattugiato]
+  acqua: [ossigenata, micellare, distillata, profumata]
+  sale: [lavastoviglie, addolcitore]
+  aceto: [detergente]
+  olio: [motore, solare, corpo]

@@ -1,0 +1,5 @@
+playwright>=1.47
+PyYAML>=6.0
+# anthropic serve solo per la seconda passata opzionale dell'abbinamento
+anthropic>=1.0
+pytest>=8.0

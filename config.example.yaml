@@ -1,0 +1,85 @@
+# Copia in config.yaml (ignorato da git) e completa.
+# Le voci marcate DA DEFINIRE si ricavano dalla discovery (docs/everli-api.md).
+
+everli:
+  store:
+    id: ""                # DA DEFINIRE: ID o slug del supermercato
+    name: ""              # solo per i messaggi, es. "Esselunga Via Roma"
+  keychain:               # la sessione (cookie) sta nel Portachiavi, la salva discover.py
+    service: evershopper
+    session_account: everli-session
+  meta_file: .state/everli-meta.json     # user agent salvato da discover.py (non è un segreto)
+
+  endpoint:
+    url: ""               # DA DEFINIRE, es. https://api.everli.com/.../stores/{store_id}/promotions
+    method: GET           # GET oppure POST (con body JSON in `body`)
+    params: {}            # parametri fissi; {store_id} viene sostituito
+    body: {}              # solo per POST
+    headers: {}           # solo header NON sensibili (accept-language, x-app-version…)
+    auth:
+      type: cookie        # cookie (dalla sessione) | local_storage_bearer
+      key: ""             # per local_storage_bearer: nome della chiave in localStorage
+    items_path: ""        # DA DEFINIRE: percorso della lista prodotti, es. data.products
+    pagination:
+      type: page          # page | offset | none
+      param: page         # nome del parametro pagina/offset
+      start: 1
+      size_param: ""      # es. per_page (vuoto = non inviato)
+      size: 0             # elementi per pagina (0 = sconosciuto)
+      last_page_path: ""  # opzionale, es. meta.last_page
+      max_pages: 10
+    fields:               # DA DEFINIRE: percorsi a punti dentro ogni elemento (es. price.original)
+      id: id
+      name: name
+      brand: ""
+      format: ""
+      price_full: ""
+      price_discounted: ""
+      discount_pct: ""    # vuoto = calcolato dai due prezzi
+      valid_until: ""
+      url: ""
+    price_divisor: 1      # 100 se i prezzi sono in centesimi
+    product_url_template: ""   # se `url` manca, es. https://it.everli.com/s/.../p/{id}
+
+  limits:
+    max_requests: 30      # tetto per esecuzione
+    min_delay: 2.0        # pausa casuale tra richieste (secondi)
+    max_delay: 6.0
+    timeout: 20
+
+reminders:
+  list: Spesa
+  list_id: "17CDB086-12F2-4AAA-B64A-F61A633644B8"   # la «Spesa» in uso (ce ne sono due); id da `reminders --lists`
+  backend: auto           # auto | app | eventkit | jxa (auto = il primo disponibile in quest'ordine)
+  app: bin/EvershopperReminders.app
+  helper: bin/reminders-helper
+
+schedule:                 # esecuzione settimanale (python -m evershopper schedule install)
+  weekday: sabato         # 0 = domenica … 6 = sabato, oppure il nome del giorno
+  hour: 8
+  minute: 47              # non allo scoccare dell'ora, per non sembrare un robot
+
+matching:
+  synonyms: {}            # aggiunte ai sinonimi di base, es. {"latte": ["latte uht"]}
+  exclude: {}             # parole che escludono, es. {"latte": ["soia"]}
+  max_doubts: 8           # candidati in dubbio per voce
+  llm:
+    enabled: false        # seconda passata con l'API Claude sui dubbi
+    model: claude-opus-5-5
+    scope: ambiguous      # ambiguous (solo i dubbi) | all (anche gli abbinamenti sicuri)
+    keychain_service: evershopper
+    keychain_account: anthropic-api-key
+
+output:
+  channels: [notification, note]   # notification | note | email
+  min_discount_pct: 10    # sconto minimo da segnalare
+  max_per_item: 2         # offerte mostrate per voce
+  title: Offerte Everli   # titolo della notifica e della nota (la nota viene aggiornata, non duplicata)
+  note_folder: ""         # cartella di Note (vuoto = cartella predefinita)
+  email_to: ""            # per il canale email (invia con Mail)
+  mark_reminders: false   # scrive "🏷️ In offerta: …" nelle note dei promemoria in offerta
+  marker: "🏷️ In offerta"
+
+paths:
+  cache_dir: cache
+  log_dir: logs

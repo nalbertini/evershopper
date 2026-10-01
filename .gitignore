@@ -1,0 +1,13 @@
+# Sessione Everli (cookie) e catture di rete: restano solo sul Mac
+.state/
+discovery/captures/
+cache/
+logs/
+config.yaml
+bin/
+*.har
+
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

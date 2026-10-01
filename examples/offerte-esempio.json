@@ -1,0 +1,275 @@
+{
+  "fetched_at": "2026-10-01T09:00:00",
+  "store": {
+    "name": "Supermercato di prova"
+  },
+  "source": "esempio",
+  "note": "Offerte inventate, solo per provare abbinamento e uscite.",
+  "count": 24,
+  "offers": [
+    {
+      "id": "demo-4",
+      "name": "Cioccolato al latte",
+      "brand": "Milka",
+      "format": "100 g",
+      "price_full": 1.99,
+      "price_discounted": 1.19,
+      "discount_pct": 40.2,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-6",
+      "name": "Gelato gusto caffè",
+      "brand": "Sammontana",
+      "format": "500 g",
+      "price_full": 4.5,
+      "price_discounted": 2.9,
+      "discount_pct": 35.6,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-21",
+      "name": "Detersivo piatti",
+      "brand": "Svelto",
+      "format": "1 L",
+      "price_full": 2.29,
+      "price_discounted": 1.49,
+      "discount_pct": 34.9,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-18",
+      "name": "Tonno all'olio di oliva",
+      "brand": "Rio Mare",
+      "format": "3x80 g",
+      "price_full": 4.99,
+      "price_discounted": 3.29,
+      "discount_pct": 34.1,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-1",
+      "name": "Latte Intero UHT",
+      "brand": "Granarolo",
+      "format": "1 L",
+      "price_full": 1.79,
+      "price_discounted": 1.19,
+      "discount_pct": 33.5,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-20",
+      "name": "Carta igienica",
+      "brand": "Scottex",
+      "format": "8 rotoli",
+      "price_full": 4.49,
+      "price_discounted": 2.99,
+      "discount_pct": 33.4,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-13",
+      "name": "Biscotti Macine",
+      "brand": "Mulino Bianco",
+      "format": "350 g",
+      "price_full": 2.49,
+      "price_discounted": 1.69,
+      "discount_pct": 32.1,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-12",
+      "name": "Pane in cassetta",
+      "brand": "Mulino Bianco",
+      "format": "400 g",
+      "price_full": 2.19,
+      "price_discounted": 1.49,
+      "discount_pct": 32.0,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-7",
+      "name": "Pasta Spaghetti n.5",
+      "brand": "Barilla",
+      "format": "500 g",
+      "price_full": 1.29,
+      "price_discounted": 0.89,
+      "discount_pct": 31.0,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-24",
+      "name": "Prosciutto cotto",
+      "brand": "Rovagnati",
+      "format": "100 g",
+      "price_full": 3.29,
+      "price_discounted": 2.29,
+      "discount_pct": 30.4,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-2",
+      "name": "Latte Parzialmente Scremato",
+      "brand": "Parmalat",
+      "format": "1 L",
+      "price_full": 1.65,
+      "price_discounted": 1.15,
+      "discount_pct": 30.3,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-8",
+      "name": "Pasta Penne Rigate",
+      "brand": "De Cecco",
+      "format": "500 g",
+      "price_full": 1.69,
+      "price_discounted": 1.19,
+      "discount_pct": 29.6,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-5",
+      "name": "Caffè macinato Qualità Rossa",
+      "brand": "Lavazza",
+      "format": "250 g",
+      "price_full": 4.2,
+      "price_discounted": 2.99,
+      "discount_pct": 28.8,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-14",
+      "name": "Yogurt greco bianco",
+      "brand": "Fage",
+      "format": "170 g",
+      "price_full": 1.39,
+      "price_discounted": 0.99,
+      "discount_pct": 28.8,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-15",
+      "name": "Burro",
+      "brand": "Lurpak",
+      "format": "250 g",
+      "price_full": 3.49,
+      "price_discounted": 2.49,
+      "discount_pct": 28.7,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-17",
+      "name": "Olio extravergine di oliva",
+      "brand": "Monini",
+      "format": "1 L",
+      "price_full": 11.9,
+      "price_discounted": 8.49,
+      "discount_pct": 28.7,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-10",
+      "name": "Passata di pomodoro",
+      "brand": "Mutti",
+      "format": "700 g",
+      "price_full": 1.79,
+      "price_discounted": 1.29,
+      "discount_pct": 27.9,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-16",
+      "name": "Parmigiano Reggiano 24 mesi",
+      "brand": "Parmareggio",
+      "format": "300 g",
+      "price_full": 6.9,
+      "price_discounted": 4.99,
+      "discount_pct": 27.7,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-19",
+      "name": "Acqua minerale naturale",
+      "brand": "Sant'Anna",
+      "format": "6x1,5 L",
+      "price_full": 2.99,
+      "price_discounted": 2.19,
+      "discount_pct": 26.8,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-9",
+      "name": "Pomodori pelati",
+      "brand": "Cirio",
+      "format": "3x400 g",
+      "price_full": 2.4,
+      "price_discounted": 1.79,
+      "discount_pct": 25.4,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-23",
+      "name": "Mele Golden",
+      "brand": "Melinda",
+      "format": "1 kg",
+      "price_full": 2.99,
+      "price_discounted": 2.29,
+      "discount_pct": 23.4,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-22",
+      "name": "Banane",
+      "brand": "Chiquita",
+      "format": "1 kg",
+      "price_full": 2.29,
+      "price_discounted": 1.79,
+      "discount_pct": 21.8,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-3",
+      "name": "Latte Zymil senza lattosio",
+      "brand": "Parmalat",
+      "format": "1 L",
+      "price_full": 1.99,
+      "price_discounted": 1.59,
+      "discount_pct": 20.1,
+      "valid_until": "2026-10-12",
+      "url": null
+    },
+    {
+      "id": "demo-11",
+      "name": "Uova fresche",
+      "brand": "Aia",
+      "format": "6 pz",
+      "price_full": 2.3,
+      "price_discounted": 2.1,
+      "discount_pct": 8.7,
+      "valid_until": "2026-10-12",
+      "url": null
+    }
+  ]
+}
