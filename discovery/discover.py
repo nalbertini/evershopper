@@ -18,6 +18,7 @@ import argparse
 import json
 import re
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
@@ -61,10 +62,38 @@ def redact_url(url: str) -> tuple[str, dict[str, str]]:
     return f"{parts.scheme}://{parts.netloc}{parts.path}", params
 
 
+def page_url(response: Response) -> str | None:
+    """Pagina che ha fatto la richiesta; None per quelle dei service worker, che non hanno pagina."""
+    try:
+        frame = response.frame
+    except Exception:
+        return None
+    return frame.url if frame else None
+
+
+def wait_for_enter(context) -> None:
+    """Aspetta INVIO nel terminale tenendo vivo Playwright.
+
+    Con un semplice input() l'API sincrona di Playwright resta ferma: gli eventi di rete
+    verrebbero elaborati tutti alla fine, quando alcune risposte non sono più leggibili.
+    """
+    done = threading.Event()
+    threading.Thread(target=lambda: (sys.stdin.readline(), done.set()), daemon=True).start()
+    while not done.is_set():
+        pages = context.pages
+        if not pages:
+            print("Tutte le schede sono state chiuse: salvo quello che c'è.")
+            return
+        pages[0].wait_for_timeout(250)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Discovery dell'API Everli e login manuale")
     parser.add_argument("--login", action="store_true", help="solo login: non registra le chiamate di rete")
-    login_only = parser.parse_args().login
+    parser.add_argument("--url", default=START_URL, help=argparse.SUPPRESS)  # per le prove
+    parser.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)  # per le prove
+    args = parser.parse_args()
+    login_only = args.login
 
     kc = config.load()["everli"]["keychain"]
     try:
@@ -80,9 +109,15 @@ def main() -> int:
     count = 0
 
     def on_response(response: Response) -> None:
-        nonlocal count
         if login_only:
             return
+        try:
+            record_response(response)
+        except Exception as exc:  # una risposta strana non deve fermare la discovery
+            print(f"  (risposta ignorata: {str(exc).splitlines()[0]})")
+
+    def record_response(response: Response) -> None:
+        nonlocal count
         request: Request = response.request
         if request.resource_type not in ("xhr", "fetch"):
             return
@@ -103,7 +138,7 @@ def main() -> int:
         endpoint, params = redact_url(request.url)
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
-            "page": response.frame.url if response.frame else None,
+            "page": page_url(response),
             "method": request.method,
             "endpoint": endpoint,
             "params": params,
@@ -120,7 +155,7 @@ def main() -> int:
         print(f"  [{response.status}] {request.method} {endpoint}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=50)
+        browser = p.chromium.launch(headless=args.headless, slow_mo=50)
         context = browser.new_context(
             storage_state=saved,
             locale="it-IT",
@@ -128,7 +163,10 @@ def main() -> int:
         )
         context.on("response", on_response)
         page = context.new_page()
-        page.goto(START_URL)
+        page.goto(args.url)
+        # Lo user agent si legge subito, finché la pagina è sicuramente aperta;
+        # serve anche alle chiamate dirette della fase 2.
+        META_FILE.write_text(json.dumps({"user_agent": page.evaluate("navigator.userAgent")}))
 
         if login_only:
             print("\nBrowser aperto: fai login a mano, poi premi INVIO qui.\n")
@@ -140,13 +178,13 @@ def main() -> int:
                 "  3. Scorri un po' la lista e passa alla pagina successiva, se c'è.\n"
                 "Le chiamate di rete vengono registrate qui sotto.\n"
             )
-        input("Premi INVIO qui quando hai finito per salvare la sessione e chiudere…\n")
+        print("Premi INVIO qui quando hai finito per salvare la sessione e chiudere…")
+        wait_for_enter(context)
 
         # Nessun file: la sessione va direttamente nel Portachiavi.
         keychain.save_session(kc["service"], kc["session_account"], context.storage_state())
-        # Stesso user agent anche per le chiamate dirette della fase 2.
-        META_FILE.write_text(json.dumps({"user_agent": page.evaluate("navigator.userAgent")}))
-        print(f"\nURL finale: {page.url}")
+        if context.pages:
+            print(f"\nURL finale: {context.pages[0].url}")
         browser.close()
 
     out.close()
