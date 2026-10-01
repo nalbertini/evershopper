@@ -29,7 +29,8 @@ LAST_PAGE_KEYS = ("last_page", "lastpage", "total_pages", "totalpages", "pages",
 
 FULL_WORDS = re.compile(r"(original|full|regular|old|list|strike|before|initial|base|was|undiscount|pieno|listino|previous)")
 DISC_WORDS = re.compile(r"(discounted|discount_price|offer|promo|sale|final|current|special|now|scontat|actual|selling)")
-PER_UNIT = re.compile(r"(unit|per_?kg|_kg|kilo|liter|litre|litro|per_?l\b|per_?unit|unitario|reference|measure)")
+# Prezzi al kg/litro/unità ("price_per_type", "unit_price", "price_per_kg"…): non sono il prezzo del prodotto.
+PER_UNIT = re.compile(r"(per_|_per\b|unit|_kg|kilo|liter|litre|litro|unitario|reference|measure|al_kg|al_litro)")
 PCT_WORDS = re.compile(r"(percent|pct|perc|percentage|%|sconto|discount|saving|off)")
 DATE_WORDS = re.compile(r"(end|until|expir|valid_?to|to_?date|fine|scadenza|ends|valid_?until|stop)")
 DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}")
@@ -53,6 +54,7 @@ class Proposal:
     pages: list[Any] = field(default_factory=list)
     offers: list[Offer] = field(default_factory=list)
     calls: int = 0
+    sample_item: dict = field(default_factory=dict)
 
 
 class AutoconfigError(Exception):
@@ -190,6 +192,9 @@ def infer_pagination(recs: list[dict], notes: list[str]) -> tuple[dict, dict, st
     elif k := pick(OFFSET_PARAMS):
         page_param = k
         pag.update(type="offset", param=k, start=min(_int(v) for v in numeric[k]))
+    if page_param and any(page_param not in request_params(r) for r in recs):
+        # La prima pagina spesso non ha il parametro (es. niente "skip"): si parte dall'inizio.
+        pag["start"] = 0 if pag["type"] == "offset" else 1
     elif varying:
         notes.append("Il parametro che cambia tra le chiamate non è numerico (forse un cursore): "
                      f"{', '.join(varying)}. Uso solo la prima pagina.")
@@ -287,21 +292,54 @@ def infer_fields(items: list[dict], notes: list[str]) -> tuple[dict, float]:
                                exclude=(fields["name"],))
     fields["url"] = by_keys(URL_KEYS, lambda v: is_text(v) and "/" in v)
 
-    # Prezzi: candidati numerici con "price"/"prezzo" nel percorso, esclusi i prezzi al kg/litro.
+    # Percentuale di sconto: serve anche a capire quale coppia di prezzi è quella giusta.
+    pct = [p for p, vs in present.items() if PCT_WORDS.search(_last(p)) and not re.search("price|prezzo", _last(p))
+           and _share(vs, lambda v: is_num(v) and 0 < abs(parse_number(v)) < 100) > 0.7]
+    if pct:
+        fields["discount_pct"] = min(pct, key=len)
+
+    # Prezzi: candidati numerici con "price"/"prezzo"/… nel percorso, esclusi quelli al kg/litro/unità.
     prices = [p for p, vs in present.items()
-              if re.search(r"(price|prezzo|cost|amount|importo)", p, re.I)
+              if re.search(r"(price|prezzo|cost|amount|importo|value|valore)", p, re.I)
               and not PER_UNIT.search(p.lower()) and not PCT_WORDS.search(_last(p))
               and _share(vs, is_num) > 0.7]
-    full = [p for p in prices if FULL_WORDS.search(p.lower())]
-    disc = [p for p in prices if DISC_WORDS.search(p.lower()) and p not in full]
-    plain = [p for p in prices if p not in full and p not in disc]
-    fields["price_full"] = min(full, key=len) if full else ""
-    fields["price_discounted"] = min(disc, key=len) if disc else (min(plain, key=len) if plain else "")
-    if not fields["price_full"] and len(plain) >= 2:
-        # Due prezzi senza nome chiaro: il pieno è quello mediamente più alto.
-        a, b = sorted(plain, key=len)[:2]
-        hi = median(parse_number(v) for v in present[a] if is_num(v)) >= median(parse_number(v) for v in present[b] if is_num(v))
-        fields["price_full"], fields["price_discounted"] = (a, b) if hi else (b, a)
+
+    def agreement(full_p: str, disc_p: str) -> float:
+        """Quota di prodotti in cui (pieno - scontato) / pieno coincide con la percentuale indicata."""
+        ok = tot = 0
+        for f in flat:
+            pc, a, b = (parse_number(f.get(fields["discount_pct"])), parse_number(f.get(full_p)),
+                        parse_number(f.get(disc_p)))
+            if pc is None or a is None or b is None or not a or not 0 < abs(pc) < 100:
+                continue
+            tot += 1
+            ok += abs((a - b) / a * 100 - abs(pc)) <= 1.5
+        return ok / tot if tot >= 3 else 0.0
+
+    best = None
+    if fields["discount_pct"] and len(prices) >= 2:
+        best = max(((agreement(a, b), a, b) for a in prices for b in prices if a != b), default=None)
+        if best and best[0] >= 0.6:
+            fields["price_full"], fields["price_discounted"] = best[1], best[2]
+            notes.append(f"Prezzi scelti perché coerenti con «{fields['discount_pct']}» nel {best[0]:.0%} dei prodotti.")
+        else:
+            best = None
+    if best is None:
+        full = [p for p in prices if FULL_WORDS.search(p.lower())]
+        disc = [p for p in prices if DISC_WORDS.search(p.lower()) and p not in full]
+        plain = [p for p in prices if p not in full and p not in disc]
+        fields["price_full"] = min(full, key=len) if full else ""
+        fields["price_discounted"] = min(disc, key=len) if disc else (min(plain, key=len) if plain else "")
+        if fields["discount_pct"] and fields["price_discounted"] and (
+                not fields["price_full"] or agreement(fields["price_full"], fields["price_discounted"]) < 0.6):
+            # Un solo prezzo affidabile più la percentuale: il prezzo pieno si ricava dallo sconto.
+            fields["price_full"] = ""
+            notes.append("Prezzo pieno non trovato: lo ricavo da prezzo scontato e percentuale di sconto.")
+        elif not fields["price_full"] and len(plain) >= 2:
+            # Due prezzi senza nome chiaro: il pieno è quello mediamente più alto.
+            a, b = sorted(plain, key=len)[:2]
+            hi = median(parse_number(v) for v in present[a] if is_num(v)) >= median(parse_number(v) for v in present[b] if is_num(v))
+            fields["price_full"], fields["price_discounted"] = (a, b) if hi else (b, a)
 
     divisor = 1.0
     discs = [parse_number(v) for v in present.get(fields["price_discounted"], []) if is_num(v)]
@@ -317,10 +355,6 @@ def infer_fields(items: list[dict], notes: list[str]) -> tuple[dict, float]:
         if pairs and sum(1 for a, b in pairs if a < b) > len(pairs) / 2:
             fields["price_full"], fields["price_discounted"] = fields["price_discounted"], fields["price_full"]
 
-    pct = [p for p, vs in present.items() if PCT_WORDS.search(_last(p)) and not re.search("price|prezzo", _last(p))
-           and _share(vs, lambda v: is_num(v) and 0 < abs(parse_number(v)) < 100) > 0.7]
-    if pct:
-        fields["discount_pct"] = min(pct, key=len)
     dates = [p for p, vs in present.items() if DATE_WORDS.search(_last(p))
              and _share(vs, lambda v: (isinstance(v, str) and bool(DATE_VALUE.match(v)))
                         or (isinstance(v, (int, float)) and not isinstance(v, bool) and v > 1e9)) > 0.7]
@@ -397,7 +431,11 @@ def propose(records: list[dict]) -> Proposal:
     endpoint["sorted_by_discount"] = is_sorted_by_discount(pages, endpoint)
     if not endpoint["sorted_by_discount"]:
         notes.append("Le offerte non risultano ordinate per sconto: scarico tutte le pagine (fino ai limiti).")
-    return Proposal(endpoint=endpoint, notes=notes, pages=pages, offers=offers, calls=len(recs))
+    if pag["type"] != "none":
+        # Senza ordinamento per sconto vanno lette tutte le pagine: margine sulle pagine viste, entro il tetto.
+        pag["max_pages"] = min(30, max(20, len(pages) + 5))
+    return Proposal(endpoint=endpoint, notes=notes, pages=pages, offers=offers, calls=len(recs),
+                    sample_item=items[0] if items else {})
 
 
 def is_sorted_by_discount(pages: list, endpoint: dict) -> bool:
@@ -419,6 +457,8 @@ def quality(p: Proposal) -> dict:
     o = p.offers
     n = max(len(o), 1)
     return {
+        # prezzo scontato a zero o sconto ≥ 95%: quasi sempre un campo sbagliato
+        "suspicious": sum(1 for x in o if x.price_discounted == 0 or (x.discount_pct or 0) >= 95) / n,
         "offers": len(o),
         "with_prices": sum(1 for x in o if x.price_discounted is not None) / n,
         "with_full": sum(1 for x in o if x.price_full is not None) / n,
@@ -426,6 +466,15 @@ def quality(p: Proposal) -> dict:
         "consistent": sum(1 for x in o if x.price_full is None or x.price_discounted is None
                           or x.price_discounted <= x.price_full) / n,
     }
+
+
+def describe_item(item: dict, width: int = 60) -> list[str]:
+    """Campi di un prodotto con tipo ed esempio (sono dati del catalogo, non personali)."""
+    out = []
+    for k, v in flatten(item).items():
+        text = json.dumps(v, ensure_ascii=False)
+        out.append(f"  {k:<32} {type(v).__name__:<6} {text[:width] + ('…' if len(text) > width else '')}")
+    return out
 
 
 def api_doc(p: Proposal, capture_name: str, today: str) -> str:
