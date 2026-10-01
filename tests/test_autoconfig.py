@@ -198,3 +198,76 @@ def test_cli_dry_run_and_unreliable(tmp_path, monkeypatch, capsys):
     assert cli.main(["--config", str(conf), "autoconfig"]) == cli.EXIT_ERROR
     assert "non è affidabile" in capsys.readouterr().out
     assert "endpoint" not in conf.read_text()
+
+
+# Forma D (come la cattura vera): "skip" assente nella prima chiamata, prezzo scontato in "price"
+# (centesimi), prezzo al litro in "price_per_type" (spesso 0), percentuale in "discount_percentage".
+def shape_d(full_key=None):
+    out = []
+    for n, skip in enumerate((None, 50, 100)):
+        items = []
+        for i in range(50):
+            full = 200 + (n * 50 + i) * 3
+            pct = 10 + (i * 7) % 40
+            item = {"id": n * 50 + i, "name": f"Vino {n}-{i}", "brand": "Cantina",
+                    "price": round(full * (1 - pct / 100)), "price_per_type": 0 if i % 3 else full * 2,
+                    "discount_percentage": pct}
+            if full_key:
+                item[full_key] = full
+            items.append(item)
+        params = {"limit": "50"} | ({"skip": str(skip)} if skip is not None else {})
+        out.append(rec("https://spesa.everli.com/api/offers", params, {"data": items}))
+    return out
+
+
+def test_shape_d_only_discounted_price_and_pct():
+    p = autoconfig.propose(noise() + shape_d())
+    ep = p.endpoint
+    pag = ep["pagination"]
+    assert (pag["type"], pag["param"], pag["start"], pag["size_param"], pag["size"]) == ("offset", "skip", 0, "limit", 50)
+    f = ep["fields"]
+    assert f["price_discounted"] == "price" and f["price_full"] == "" and f["discount_pct"] == "discount_percentage"
+    assert ep["price_divisor"] == 100
+    q = autoconfig.quality(p)
+    assert q["suspicious"] == 0 and q["with_full"] == 1 and q["consistent"] == 1
+    o = next(x for x in p.offers if x.id == "0")
+    assert o.price_discounted == 1.80 and o.price_full == 2.0 and o.discount_pct == 10
+
+
+def test_shape_d_full_price_with_unusual_name():
+    p = autoconfig.propose(shape_d(full_key="list_value"))
+    f = p.endpoint["fields"]
+    assert (f["price_full"], f["price_discounted"]) == ("list_value", "price")
+    assert any("coerenti" in n for n in p.notes)
+    assert autoconfig.quality(p)["suspicious"] == 0
+
+
+def test_unit_price_is_never_the_offer_price():
+    for path in ("price_per_type", "unit_price", "price_per_kg", "prices.per_liter"):
+        assert autoconfig.PER_UNIT.search(path)
+    for path in ("price", "original_price", "price.current", "discount_percentage"):
+        assert not autoconfig.PER_UNIT.search(path)
+
+
+def test_suspicious_offers_block_writing(tmp_path, monkeypatch, capsys):
+    # Il caso della prima cattura vera: prezzo "scontato" preso da un campo che vale 0 → sconto 100%.
+    from evershopper.models import Offer
+    bad = autoconfig.Proposal(endpoint={}, offers=[Offer(id=str(i), name="x", price_full=5.0, price_discounted=0.0,
+                                                         discount_pct=100.0) for i in range(10)])
+    assert autoconfig.quality(bad)["suspicious"] == 1
+
+    good = autoconfig.propose(shape_d())
+    monkeypatch.setattr(autoconfig, "propose", lambda records: bad if records == ["bad"] else good)
+    monkeypatch.setattr(autoconfig, "load_records", lambda path, root: ["bad"])
+    monkeypatch.setattr(autoconfig, "latest_capture", lambda d: tmp_path / "capture-x.jsonl")
+    conf = tmp_path / "config.yaml"
+    conf.write_text(f"paths: {{cache_dir: {tmp_path / 'c'}, log_dir: {tmp_path / 'l'}}}\n")
+    bad.endpoint = good.endpoint
+    assert cli.main(["--config", str(conf), "autoconfig"]) == cli.EXIT_ERROR
+    assert "non è affidabile" in capsys.readouterr().out and "endpoint" not in conf.read_text()
+
+
+def test_describe_item_shows_fields():
+    lines = autoconfig.describe_item({"id": 1, "price": {"current": 199}, "name": "x" * 100})
+    assert any(l.split()[0] == "price.current" and "int" in l for l in lines)
+    assert any(l.rstrip().endswith("…") for l in lines)

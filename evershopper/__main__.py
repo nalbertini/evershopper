@@ -322,10 +322,12 @@ def cmd_autoconfig(cfg: dict, args) -> int:
         print(f"Nota: {n}")
     print(f"\nVerifica sulle risposte catturate: {q['offers']} offerte · con prezzo {q['with_prices']:.0%}"
           f" · con prezzo pieno {q['with_full']:.0%} · con sconto {q['with_discount']:.0%}"
-          f" · prezzi coerenti {q['consistent']:.0%}")
+          f" · prezzi coerenti {q['consistent']:.0%} · sospette (prezzo 0 o sconto ≥95%) {q['suspicious']:.0%}")
     _print_offers(prop.offers, args.limit)
+    print("\nStruttura di un prodotto (campo, tipo, esempio):")
+    print("\n".join(autoconfig.describe_item(prop.sample_item)))
 
-    ok = q["offers"] > 0 and q["with_prices"] >= 0.8 and q["consistent"] >= 0.9
+    ok = q["offers"] > 0 and q["with_prices"] >= 0.8 and q["consistent"] >= 0.9 and q["suspicious"] < 0.05
     if not ok:
         print("\nIl risultato non è affidabile: non scrivo config.yaml. Incolla questo output a Claude.")
         return EXIT_ERROR

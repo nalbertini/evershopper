@@ -74,6 +74,9 @@ def parse_offer(item: dict, ep: dict) -> Offer | None:
         pct = abs(pct)
     elif full and disc is not None and full > disc:
         pct = round((full - disc) / full * 100, 1)
+    if full is None and disc and pct and 0 < pct < 100:
+        # Solo prezzo scontato e percentuale: il prezzo pieno si ricava.
+        full = round(disc / (1 - pct / 100), 2)
 
     oid = f("id")
     url = f("url")
