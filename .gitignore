@@ -14,3 +14,4 @@ __pycache__/
 
 # add-on preparato da scripts/ha_addon.sh
 dist/
+!homeassistant/config.yaml
