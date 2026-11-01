@@ -11,6 +11,7 @@ Gira solo in locale, su macOS. Requisiti e fasi sono in [SPEC.md](SPEC.md).
 - [x] Fase 4 – matching (locale + seconda passata opzionale con Claude)
 - [x] Fase 5 – output e notifiche (comando `run`)
 - [x] Fase 6 – launchd + Portachiavi (`schedule`, `doctor`)
+- [x] Add-on di Home Assistant (`homeassistant/`, vedi [DOCS.md](homeassistant/DOCS.md))
 
 ## Fase 1: discovery (sul Mac)
 
@@ -176,3 +177,17 @@ Per vederli o cancellarli: app Accesso Portachiavi, cerca «evershopper».
   Nelle catture gli header con cookie/token sono oscurati. `doctor` verifica che nel repository
   non ci siano file privati né chiavi API.
 - Uso personale, poche richieste, a ritmo umano e senza parallelismo, come richiesto dai termini Everli.
+
+## Home Assistant
+
+L'add-on locale fa girare `run` ogni settimana su Home Assistant, senza il Mac. La lista arriva da una To-do di HA
+(`reminders.todo_entity`, predefinita `todo.spesa`), perché Home Assistant non può leggere Promemoria. Il riepilogo va
+in notifica, in `sensor.evershopper_offerte` e nella pagina "Spesa" della barra laterale. Discovery, login e `autoconfig`
+restano sul Mac.
+
+```bash
+./scripts/ha_addon.sh                      # prepara dist/evershopper: copialo in `addons` (Samba) e installalo da "Add-on locali"
+.venv/bin/python -m evershopper export-session   # sessione negli appunti, da incollare nell'opzione everli_session
+```
+
+Passi e opzioni sono in [homeassistant/DOCS.md](homeassistant/DOCS.md).

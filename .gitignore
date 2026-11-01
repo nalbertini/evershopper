@@ -11,3 +11,7 @@ bin/
 __pycache__/
 *.pyc
 .DS_Store
+
+# add-on preparato da scripts/ha_addon.sh
+dist/
+!homeassistant/config.yaml

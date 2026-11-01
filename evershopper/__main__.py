@@ -9,14 +9,18 @@
     python -m evershopper schedule install            # esecuzione settimanale con launchd (fase 6)
     python -m evershopper doctor                      # controlla che sia tutto pronto
     python -m evershopper autoconfig                  # ricava l'endpoint dall'ultima discovery
+    python -m evershopper export-session              # copia la sessione per l'add-on di Home Assistant
+    python -m evershopper serve                       # dentro l'add-on: pagina, sensore e run settimanale
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -24,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-from . import autoconfig, cache, config, doctor, keychain, logs, outputs, pipeline, report, reminders, schedule
+from . import autoconfig, cache, config, doctor, ha, keychain, logs, outputs, pipeline, report, reminders, schedule
 from .everli.client import ConnectionFailed, EverliError, SessionExpired
 from .models import Offer
 from .notify import notify
@@ -163,6 +167,14 @@ def _deliver(cfg: dict, rep: report.Report, text: str, html: str, items: list, f
     channels = oc.get("channels") or []
     channels = [channels] if isinstance(channels, str) else channels
     failures = 0
+    if ha.active():
+        # Note e Mail esistono solo sul Mac: in Home Assistant notifica, sensore e pagina.
+        channels = ["notification"]
+        try:
+            ha.save(config.resolve(cfg["paths"]["cache_dir"]), rep, html)
+        except Exception as exc:
+            log.error("Sensore e pagina di Home Assistant: %s", exc)
+            failures += 1
     for ch in channels:
         try:
             if ch == "notification":
@@ -179,7 +191,7 @@ def _deliver(cfg: dict, rep: report.Report, text: str, html: str, items: list, f
             log.error("%s", exc)
             failures += 1
 
-    if oc.get("mark_reminders"):
+    if oc.get("mark_reminders") and not ha.active():
         list_ids = sorted({i.list_id for i in items if i.list_id}) or [x for x in [cfg["reminders"].get("list_id")] if x]
         if from_file:
             log.warning("Lista letta da file: etichette sui promemoria non aggiornate")
@@ -351,6 +363,33 @@ def cmd_autoconfig(cfg: dict, args) -> int:
     return 0
 
 
+def cmd_export_session(cfg: dict, args) -> int:
+    """Sul Mac: sessione e user agent in un'unica stringa negli appunti, da incollare nell'opzione everli_session."""
+    state, user_agent = pipeline.load_session(cfg)
+    blob = base64.b64encode(json.dumps({"state": state, "user_agent": user_agent},
+                                       separators=(",", ":")).encode()).decode()
+    subprocess.run(["pbcopy"], input=blob, text=True, check=True)  # negli appunti, mai sullo schermo
+    print("Sessione copiata negli appunti: incollala nell'opzione everli_session dell'add-on e salva.")
+    return 0
+
+
+def cmd_serve(cfg: dict, args) -> int:
+    if not ha.active():
+        print("`serve` gira solo dentro l'add-on di Home Assistant", file=sys.stderr)
+        return EXIT_ERROR
+
+    def run() -> int:
+        try:
+            return main((["--config", str(args.config)] if args.config else []) + ["run"])
+        except Exception:  # un'esecuzione andata male non deve fermare l'add-on
+            log.exception("Esecuzione non riuscita")
+            return EXIT_ERROR
+
+    ha.serve(config.resolve(cfg["paths"]["cache_dir"]),
+             lambda: schedule.next_run(*schedule.timing(config.load(args.config))), run)
+    return 0
+
+
 def cmd_doctor(cfg: dict, args) -> int:
     return 0 if doctor.run(cfg) else EXIT_ERROR
 
@@ -396,6 +435,8 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--capture", type=Path, metavar="FILE", help="cattura da usare (default: l'ultima)")
     p_auto.add_argument("--dry-run", action="store_true", help="mostra la proposta senza scrivere config.yaml")
     p_auto.add_argument("--limit", type=int, default=10, help="offerte mostrate in anteprima")
+    sub.add_parser("export-session", help="copia la sessione Everli per l'add-on di Home Assistant")
+    sub.add_parser("serve", help="dentro l'add-on di Home Assistant: pagina, sensore e run settimanale")
     args = parser.parse_args(argv)
 
     try:
@@ -408,10 +449,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return {"fetch": cmd_fetch, "show": cmd_show, "reminders": cmd_reminders, "match": cmd_match,
                 "run": cmd_run, "schedule": cmd_schedule, "doctor": cmd_doctor,
-                "autoconfig": cmd_autoconfig}[args.cmd](cfg, args)
+                "autoconfig": cmd_autoconfig, "export-session": cmd_export_session,
+                "serve": cmd_serve}[args.cmd](cfg, args)
     except SessionExpired as exc:
         log.warning("Sessione scaduta: %s", exc)
-        notify("Offerte Everli", "Sessione Everli scaduta: rifai il login con discovery/discover.py --login")
+        notify("Offerte Everli", "Sessione Everli scaduta: rifai il login sul Mac con discovery/discover.py --login"
+               + (" e poi `export-session` nell'opzione everli_session dell'add-on" if ha.active() else ""))
         return EXIT_SESSION_EXPIRED
     except reminders.RemindersAccessDenied as exc:
         log.error("%s", exc)

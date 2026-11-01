@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
-from . import cache, config, keychain, llm, matching, reminders
+from . import cache, config, ha, keychain, llm, matching, reminders
 from .everli.client import (
     EverliClient,
     EverliError,
@@ -31,15 +32,7 @@ def fetch_offers(cfg: dict, from_json: list[str] | None = None, save: bool = Tru
         pages = [json.loads(Path(p).read_text(encoding="utf-8")) for p in from_json]
         source, n_requests = "file", 0
     else:
-        kc = ev["keychain"]
-        state = keychain.load_session(kc["service"], kc["session_account"])
-        if not state:
-            raise SessionExpired("Sessione Everli non trovata nel Portachiavi: lancia discovery/discover.py --login")
-        meta_file = config.resolve(ev["meta_file"])
-        # Senza lo user agent del browser Playwright si presenterebbe come "Playwright/…": meglio fermarsi.
-        user_agent = json.loads(meta_file.read_text()).get("user_agent") if meta_file.exists() else None
-        if not user_agent:
-            raise SessionExpired("User agent del browser non salvato: lancia discovery/discover.py --login")
+        state, user_agent = load_session(cfg)
         headers = dict(ep.get("headers") or {})
         auth = ep.get("auth") or {}
         if auth.get("type") == "local_storage_bearer":
@@ -83,6 +76,28 @@ def fetch_offers(cfg: dict, from_json: list[str] | None = None, save: bool = Tru
     return offers, pages, n_requests, path
 
 
+def load_session(cfg: dict) -> tuple[dict, str]:
+    """Sessione e user agent: dall'opzione dell'add-on (EVERSHOPPER_SESSION) o da Portachiavi e meta_file."""
+    blob = os.environ.get("EVERSHOPPER_SESSION")
+    if blob:
+        try:
+            return ha.decode_session(blob)
+        except (ValueError, KeyError):
+            raise SessionExpired("Opzione everli_session non valida: rifalla sul Mac con "
+                                 "`python -m evershopper export-session`") from None
+    ev = cfg["everli"]
+    kc = ev["keychain"]
+    state = keychain.load_session(kc["service"], kc["session_account"])
+    if not state:
+        raise SessionExpired("Sessione Everli non trovata nel Portachiavi: lancia discovery/discover.py --login")
+    meta_file = config.resolve(ev["meta_file"])
+    # Senza lo user agent del browser Playwright si presenterebbe come "Playwright/…": meglio fermarsi.
+    user_agent = json.loads(meta_file.read_text()).get("user_agent") if meta_file.exists() else None
+    if not user_agent:
+        raise SessionExpired("User agent del browser non salvato: lancia discovery/discover.py --login")
+    return state, user_agent
+
+
 def load_offers(cfg: dict, path: Path | None = None) -> tuple[str, list[Offer]]:
     """Offerte da un file di cache o dall'ultima cache. Restituisce (data, offerte)."""
     if path:
@@ -112,6 +127,8 @@ def load_items(cfg: dict, path: Path | None = None) -> list[reminders.ShoppingIt
     if path:
         return reminders.read_json(path)
     rc = cfg["reminders"]
+    if ha.active():
+        return ha.read_todo(rc.get("todo_entity") or "todo.spesa")
     return reminders.read_list(rc["list"], list_id=rc.get("list_id") or None, **helper_paths(cfg))
 
 
@@ -123,7 +140,7 @@ def run_matching(cfg: dict, offers: list[Offer], items: list, use_llm: bool | No
     lc = mc["llm"]
     use_llm = lc["enabled"] if use_llm is None else use_llm
     if use_llm and any(r.doubts for r in results):
-        key = keychain.get_secret(lc["keychain_service"], lc["keychain_account"])
+        key = os.environ.get("ANTHROPIC_API_KEY") or keychain.get_secret(lc["keychain_service"], lc["keychain_account"])
         if not key:
             log.warning(
                 "Chiave API non trovata nel Portachiavi (servizio %s, account %s): salto la seconda passata",

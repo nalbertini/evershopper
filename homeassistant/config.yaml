@@ -1,0 +1,30 @@
+# Add-on locale di Home Assistant: le offerte Everli incrociate con la lista della spesa, senza il Mac.
+# Si prepara con `scripts/ha_addon.sh` (copia questa cartella e il codice in dist/evershopper) e si copia in `addons`.
+name: Evershopper
+version: "0.0.0" # sostituita da scripts/ha_addon.sh con la data della preparazione
+slug: evershopper
+description: Ogni settimana le offerte Everli del supermercato incrociate con la To-do della spesa.
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+# config.yaml, cache e log in /share/evershopper: si vedono dalla condivisione Samba e finiscono nei backup di HA
+map:
+  - share:rw
+# l'ultimo riepilogo dalla barra laterale (Ingress); nessuna porta aperta verso la rete
+ingress: true
+ingress_port: 8791
+panel_icon: mdi:cart-percent
+panel_title: Spesa
+# lista dalla To-do, notifiche e sensor.evershopper_offerte
+homeassistant_api: true
+options:
+  everli_session: ""
+  notify_service: ""
+  anthropic_api_key: ""
+schema:
+  everli_session: password?
+  notify_service: str?
+  anthropic_api_key: password?
