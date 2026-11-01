@@ -54,6 +54,7 @@ reminders:
   backend: auto           # auto | app | eventkit | jxa (auto = il primo disponibile in quest'ordine)
   app: bin/EvershopperReminders.app
   helper: bin/reminders-helper
+  todo_entity: todo.spesa # solo nell'add-on di Home Assistant: la To-do da cui leggere la lista
 
 schedule:                 # esecuzione settimanale (python -m evershopper schedule install)
   weekday: sabato         # 0 = domenica … 6 = sabato, oppure il nome del giorno

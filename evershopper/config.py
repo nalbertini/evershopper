@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,9 @@ import yaml
 from . import ROOT
 
 EXAMPLE = ROOT / "config.example.yaml"
-DEFAULT = ROOT / "config.yaml"
+# Nell'add-on di Home Assistant config.yaml, cache e log stanno in /share/evershopper, non accanto al codice.
+HOME = Path(os.environ.get("EVERSHOPPER_HOME") or ROOT)
+DEFAULT = HOME / "config.yaml"
 
 
 class ConfigError(Exception):
@@ -35,6 +38,6 @@ def load(path: Path | None = None) -> dict[str, Any]:
 
 
 def resolve(path: str) -> Path:
-    """Percorsi relativi della config interpretati dalla root del repo."""
+    """Percorsi relativi della config interpretati dalla root del repo (o da EVERSHOPPER_HOME)."""
     p = Path(path).expanduser()
-    return p if p.is_absolute() else ROOT / p
+    return p if p.is_absolute() else HOME / p
